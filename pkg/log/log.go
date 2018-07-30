@@ -3,7 +3,6 @@ package log
 import (
 	"errors"
 	"fmt"
-	"os"
 )
 
 // Record forms the abstraction for a single key-value pair
@@ -12,37 +11,33 @@ type Record struct {
 	Value string
 }
 
-// Logfile holds the name of a logfile
-type file struct {
-	Name string
-}
+var log LinkedList
 
-// Tail holds a pointer to the latest logfile.
-type Tail struct {
-	CurrentTail file
-}
-
-var initialFile = file{"./logFile.txt"}
-var tail = Tail{initialFile}
-
-func getCurrentFilename() (string, error) {
-	if tail.CurrentTail.Name == "" {
-		return "", errors.New("No Current Logfile")
+func Initialize() (bool, error) {
+	log = LinkedList{nil, nil, 0}
+	_, err := log.append("./logfile.txt")
+	if err != nil {
+		return false, err
 	}
-	return tail.CurrentTail.Name, nil
+	return true, nil
+}
+
+// returns the current tail
+func getCurrentFile() (*filePointer, error) {
+	if log.Tail == nil {
+		return nil, errors.New("No Current Logfile")
+	}
+	return log.Tail.Data, nil
 }
 
 // Append appends a file to the current logfile
-func Append(record Record) (Record, error) {
-	filename, err := getCurrentFilename()
+func Append(record Record) (bool, error) {
+	file, err := getCurrentFile()
 	if err != nil {
-		return record, err
+		return false, err
 	}
-	f, err := os.OpenFile(filename, os.O_APPEND|os.O_WRONLY, 0644)
-	if err != nil {
-		return record, err
-	}
-	_, err = fmt.Fprintf(f, "{%s: %s}", record.Key, record.Value)
-	f.Close()
-	return record, nil
+	file.Mutex.Lock()
+	_, err = fmt.Fprintf(file.File, "{%s: %s}", record.Key, record.Value)
+	file.Mutex.Unlock()
+	return true, nil
 }
