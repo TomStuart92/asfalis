@@ -1,8 +1,10 @@
 package log
 
 import (
+	"bufio"
 	"errors"
 	"fmt"
+	"strings"
 )
 
 // Record forms the abstraction for a single key-value pair
@@ -37,7 +39,26 @@ func Append(record Record) (bool, error) {
 		return false, err
 	}
 	file.Mutex.Lock()
-	_, err = fmt.Fprintf(file.File, "{%s: %s}", record.Key, record.Value)
+	_, err = fmt.Fprintf(file.File, "%s: %s", record.Key, record.Value)
 	file.Mutex.Unlock()
 	return true, nil
+}
+
+// Get returns the last entry in a file.
+func Get(key string) (Record, error) {
+	record := Record{Key: key, Value: ""}
+	file, err := getCurrentFile()
+	if err != nil {
+		return record, err
+	}
+	scanner := bufio.NewScanner(file.File)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.HasPrefix(line, key) {
+			record.Value = strings.TrimPrefix(line, key+": ")
+			fmt.Print(record)
+			return record, nil
+		}
+	}
+	return record, nil
 }

@@ -13,3 +13,12 @@ func Insert(key string, value string) (log.Record, error) {
 	}
 	return record, nil
 }
+
+// GetRecord gets a record by key
+func GetRecord(key string) (log.Record, error) {
+	record, err := log.Get(key)
+	if err != nil {
+		return record, err
+	}
+	return record, nil
+}
