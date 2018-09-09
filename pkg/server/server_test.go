@@ -8,7 +8,7 @@ import (
 )
 
 func TestSet(t *testing.T) {
-	test := server{}
+	test := Server{}
 	req := &pb.KeyValueRequest{Key: "key", Value: "value"}
 	resp, err := test.SetValue(context.Background(), req)
 	if err != nil {
@@ -23,7 +23,7 @@ func TestSet(t *testing.T) {
 }
 
 func TestGet(t *testing.T) {
-	test := server{}
+	test := Server{}
 	setReq := &pb.KeyValueRequest{Key: "key", Value: "value"}
 	getReq := &pb.KeyRequest{Key: "key"}
 	resp, err := test.SetValue(context.Background(), setReq)
@@ -40,7 +40,7 @@ func TestGet(t *testing.T) {
 }
 
 func TestDelete(t *testing.T) {
-	test := server{}
+	test := Server{}
 	setReq := &pb.KeyValueRequest{Key: "key", Value: "value"}
 	getReq := &pb.KeyRequest{Key: "key"}
 	test.SetValue(context.Background(), setReq)
