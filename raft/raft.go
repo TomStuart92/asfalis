@@ -1,6 +1,7 @@
 package raft
 
 import (
+	"bytes"
 	"sort"
 	"fmt"
 	"errors"
@@ -373,4 +374,259 @@ func (r *raft) maybeSendAppend(to uint64, sendIfEmpty bool) bool {
 	}
 	r.send(m)
 	return true
+}
+
+
+func (r *raft) sendHeartbeat(to uint64, ctx []byte) {
+	commit := min(r.getProgress(to).Match, r.raftLog.committed)
+	m := pb.Message{
+		To: to,
+		Type: pb.MsgHeartbeat,
+		Commit: commit, 
+		Context: ctx,
+	}
+	r.send(m)
+}
+
+func (r *raft) forEachProgress(f func(id uint64, pr *Progress)) {
+	for id, pr := range r.prs {
+		f(id, pr)
+	}
+	for id, pr := range r.learnerPrs {
+		f(id, pr)
+	}
+}
+
+func (r *raft) bcastAppend() {
+	r.forEachProgress(func(id uint64, _ *Progress) {
+		if id == r.id {
+			return
+		}
+		r.sendAppend(id)
+	})
+}
+
+func (r *raft) bcastHeartbeat() {
+	lastCtx := r.readOnly.lastPendingRequestCtx()
+	if len(lastCtx) == 0 {
+		r.bcastHeartbeatWithCtx(nil)
+	} else {
+		r.bcastHeartbeatWithCtx([]byte(lastCtx))
+	}
+}
+
+func (r *raft) bcastHeartbeatWithCtx(ctx []byte) {
+	r.forEachProgress(func(id uint64, _ *Progress) {
+		if id == r.id {
+			return
+		}
+		r.sendHeartbeat(id, ctx)
+	})
+}
+
+func (r *raft) maybeCommit() bool {
+	if cap(r.matchBuf) < len(r.prs) {
+		r.matchBuf = make(uint64Slice, len(r.prs))
+	}
+	mis := r.matchBuf[:len(r.prs)]
+	idx := 0
+	for _, p := range r.prs {
+		mis[idx] = p.Match
+		idx++
+	}
+	sort.Sort(mis)
+	mci := mis[len(mis) - r.quorum()]
+	return r.raftLog.maybeCommit(mci, r.Term)
+}
+
+func (r *raft) reset(term uint64) {
+	if r.Term != term {
+		r.Term = term
+		r.Vote = None
+	}
+	r.lead = None
+	r.electionElapsed = 0
+	r.heartbeatElapsed = 0
+	r.resetRandomizedElectionTimeout()
+	r.abortLeaderTransfer()
+
+	r.votes = make(map[uint64]bool)
+	r.forEachProgress(func(id uint64, pr *Progress) {
+		*pr = Progress{Next: r.raftLog.lastIndex + 1, ins: newInflights(r.maxInFlight), isLearner: pr.IsLearner}
+		if id == r.id {
+			pr.Match = r.raftLog.lastIndex()
+		}
+	})
+
+	r.pendingConfIndex = 0
+	r.readOnly = newReadOnly(r.readOnly.option)
+}
+
+func (r *raft) appendEntry(es ...pb.Entry) {
+	li := r.raftLog.lastIndex()
+	for i := range es {
+		es[i].Term =  r.Term
+		es[i].Index = li + 1 + uint64(i)
+	}
+	li = r.raftLog.append(es...)
+	r.getProgress(r.id).maybeUpdate(li)
+	r.maybeCommit()
+}
+
+func (r *raft) tickHeartbeat() {
+	r.heartbeatElapsed++
+	r.electionElapsed++
+
+	if r.electionElapsed >= r.electionTimeout {
+		r.electionElapsed = 0
+		if r.checkQuorum {
+			r.Step(pb.Message{ From: r.id, Type: pb.MsgCheckQuorum })
+		}
+		if r.state == StateLeader && r.leadTransferee != None {
+			r.abortLeaderTransfer()
+		}
+	}
+
+	if r.state != StateLeader {
+		return
+	}
+
+	if r.heartbeatElapsed >= r.heartbeatTimeout {
+		r.heartbeatElapsed = 0
+		r.Step(pb.Message{ From: r.id, Type: pb.MsgBeat })
+	}
+}
+
+func (r *raft) becomeFollower(term uint64, lead uint64) {
+	r.step = stepFollower
+	r.reset(term)
+	r.tick = r.tickElection
+	r.lead = lead
+	r.state = StateFollower
+	r.logger.Infof("%x became follower at term %d", r.id, r.Term)
+}
+
+func (r *raft) becomeCandidate() {
+	if r.state == StateLeader {
+		panic("invalid transition [leader -> candidate]")
+	}
+	r.step = stepCandidate
+	r.reset(r.Term + 1)
+	r.tick = r.tickElection
+	r.Vote = r.id
+	r.state = StateCandidate
+	r.logger.Infof("%x became candidate at term %d", r.id, r.Term)
+}
+
+func (r *raft) becomePreCandidate() {
+	if r.state == StateLeader {
+		panic("invalid transition [leader -> pre-candidate]")
+	}
+	r.step = stepCandidate
+	r.votes = make(map[uint64]bool)
+	r.tick = r.tickElection
+	r.state = StatePreCandidate
+	r.logger.Infof("%x became pre-candidate at term %d", r.id, r.Term)
+}
+
+func (r *raft) becomeLeader() {
+	if r.state == StateFollower {
+		panic("invalid transition [follower -> leader]")
+	}
+	r.step = stepLeader
+	r.reset(r.Term)
+	r.tick = r.tickHeartbeat
+	r.lead = r.id
+	r.state = StateLeader
+
+	r.pendingConfIndex = r.raftLog.lastIndex()
+	r.appendEntry(pb.Entry{Data: nil})
+	r.logger.Infof("%x became leader at term %d", r.id, r.Term)
+}
+
+func (r * raft) campaign(t CampaignType) {
+	var term uint64
+	var voteMsg pb.MessageType
+	if t == campaignPreElection {
+		r.becomePreCandidate()
+		voteMsg = pb.MsgPreVote
+		term = r.Term + 1
+	} else {
+		r.becomeCandidate()
+		voteMsg = pb.MsgVote
+		term = r.Term
+	}
+
+	if r.quorum()  == r.poll(r.id, voteRespMsgType(voteMsg), true) {
+		// we won election after voting for ourselves -> single node cluster
+		if t == campaignPreElection {
+			r.campaign(campaignElection) 
+		} else {
+			r.becomeLeader()
+		}
+		return
+	}
+	for id := range r.prs {
+		if id == r.id {
+			continue
+		}
+		r.logger.Infof("%x [logterm: %d, index: %d] sent %s request to %x at term %d", r.id, r.raftLog.lastTerm(), r.raftLog.lastIndex(), voteMsg, id, r.Term)
+		var ctx []byte
+		if t == campaignTransfer {
+			ctx = []byte(t)
+		}
+		r.send(pb.Message{Term: term, To: id, Type: voteMsg, Index: r.raftLog.lastIndex(), LogTerm: r.raftLog.lastTerm(), Context: ctx })
+	}
+}
+
+func (r *raft) poll(id uint64, t pb.MessageType, v bool) (granted int) {
+	if v {
+		r.logger.Infof("%x received %s from %x at term %d", r.id, t, id, r.Term)
+	} else {
+		r.logger.Infof("%x received %s rejection from %x at term %d", r.id, t, id, r.Term)
+	}
+	if _, ok := r.votes[id]; !ok {
+		r.votes[id] = v
+	}
+	for _, vv := range r.votes {
+		if vv {
+			granted++
+		}
+	}
+	return granted
+}
+
+func (r *raft) Step(m pb.Message) error {
+	switch {
+		case m.Term == 0:
+			// local message
+		case m.Term > r.Term:
+			if m.Type == pb.MsgVote || m.Type == pb.MsgPreVote {
+				force := bytes.Equal(m.Context, []byte(campaignTransfer))
+				inLease := r.checkQuorum && r.lead != None && r.electionElapsed < r.electionTimeout
+				if !force && inLease {
+					r.logger.Infof("%x [logterm: %d, index: %d, vote: %x] ignored %s from %x [logterm: %d, index: %d] at term %d: lease is not expired (remaining ticks: %d)",
+					r.id, r.raftLog.lastTerm(), r.raftLog.lastIndex(), r.Vote, m.Type, m.From, m.LogTerm, m.Index, r.Term, r.electionTimeout-r.electionElapsed)
+				return nil
+				}
+			}
+			switch {
+			case m.Type == pb.MsgPreVote:
+				// dont change our term in response to a PreVote
+			case m.Type == pb.MsgPreVoteResp && !m.Reject:
+				// We send pre-vote requests with a term in our future. If the
+				// pre-vote is granted, we will increment our term when we get a
+				// quorum. If it is not, the term comes from the node that
+				// rejected our vote so we should become a follower at the new
+				// term.
+			default: 
+				r.logger.Infof("%x [term: %d] received a %s message with higher term from %x [term: %d]",
+				r.id, r.Term, m.Type, m.From, m.Term)
+				if m.Type == pb.MsgApp || m.Type == pb.MsgHeartbeat || m.Type == pb.MsgSnap {
+					r.becomeFollower(m.Term, m.From)
+				} else {
+					r.becomeFollower(m.Term, None)
+				}
+			}
+	}
 }
