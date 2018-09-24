@@ -1,6 +1,6 @@
 syntax = "proto3";
 
-package api;
+package rpc;
 
 // The greeting service definition.
 service Store {

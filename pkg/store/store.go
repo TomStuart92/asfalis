@@ -1,7 +1,9 @@
 package store
 
 import (
-	"errors"
+	"bytes"
+	"encoding/gob"
+	"log"
 	"sync"
 )
 
@@ -14,38 +16,62 @@ type Record struct {
 // Store holds key-record Map
 type Store struct {
 	*sync.Mutex
-	Values map[string]*Record
+	proposeChannel chan<- string
+	Values         map[string]*Record
 }
 
 // Set a value in the store
-func (store Store) Set(key string, value string) (result Record, err error) {
-	store.Lock()
+func (store *Store) Set(key string, value string) (result Record, err error) {
 	record := Record{key, value}
-	store.Values[key] = &record
-	store.Unlock()
+	store.propose(record)
 	return record, nil
 }
 
 // Get a value from the store
-func (store Store) Get(key string) (result Record, err error) {
+func (store *Store) Get(key string) (value string, ok bool) {
 	store.Lock()
 	record, present := store.Values[key]
-	if !present {
-		return Record{}, errors.New("Key Not Found")
-	}
 	store.Unlock()
-	return *record, nil
+	return record.Value, present
 }
 
 // Delete a value from the store
-func (store Store) Delete(key string) (ok bool, err error) {
-	store.Lock()
-	delete(store.Values, key)
-	store.Unlock()
+func (store *Store) Delete(key string) (ok bool, err error) {
+	record := Record{Key: key, Value: ""}
+	store.propose(record)
 	return true, nil
 }
 
+func (store *Store) propose(record Record) {
+	var buffer bytes.Buffer
+	if err := gob.NewEncoder(&buffer).Encode(record); err != nil {
+		log.Fatal(err)
+	}
+	store.proposeChannel <- buffer.String()
+}
+
+func (store *Store) readCommits(commitChannel <-chan *string, errorChannel <-chan error) {
+	for data := range commitChannel {
+		if data == nil {
+			log.Printf("Finished Processing Updates")
+			continue
+		}
+
+		var record Record
+		dec := gob.NewDecoder(bytes.NewBufferString(*data))
+		if err := dec.Decode(&record); err != nil {
+			log.Fatalf("Could Not Decode Message (%v)", err)
+		}
+		store.Lock()
+		store.Values[record.Key] = &record
+		store.Unlock()
+	}
+	if err, ok := <-errorChannel; ok {
+		log.Fatal(err)
+	}
+}
+
 // New returns a new store instance
-func New() (store Store) {
-	return Store{&sync.Mutex{}, make(map[string]*Record)}
+func New(proposeChannel chan<- string, commitChannel chan<- *string) (store *Store) {
+	return &Store{&sync.Mutex{}, proposeChannel, make(map[string]*Record)}
 }
