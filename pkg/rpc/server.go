@@ -54,8 +54,8 @@ func ServeRPC(port string, store *store.Store) {
 	server := Server{store}
 	RegisterStoreServer(s, server)
 	reflection.Register(s)
-	fmt.Printf("Server Listening on %s", port)
+	fmt.Printf("RPC Server Listening on %s\n", port)
 	if err := s.Serve(lis); err != nil {
-		log.Fatalf("failed to serve: %v", err)
+		log.Fatalf("RPC failed to serve: %v", err)
 	}
 }

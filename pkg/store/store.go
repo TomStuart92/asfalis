@@ -32,6 +32,9 @@ func (store *Store) Get(key string) (value string, ok bool) {
 	store.Lock()
 	record, present := store.Values[key]
 	store.Unlock()
+	if !present {
+		return "", present
+	}
 	return record.Value, present
 }
 
@@ -74,4 +77,9 @@ func (store *Store) readCommits(commitChannel <-chan *string, errorChannel <-cha
 // New returns a new store instance
 func New(proposeChannel chan<- string, commitChannel chan<- *string) (store *Store) {
 	return &Store{&sync.Mutex{}, proposeChannel, make(map[string]*Record)}
+}
+
+// GetSnapshot returns a snapshot of current state
+func (store *Store) GetSnapshot() ([]byte, error) {
+	return []byte{}, nil
 }

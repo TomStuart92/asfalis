@@ -1,6 +1,7 @@
 package http
 
 import (
+	"fmt"
 	"io/ioutil"
 	"log"
 	"net/http"
@@ -54,10 +55,6 @@ func ServeHTTP(port int, store *store.Store) {
 		Addr:    ":" + strconv.Itoa(port),
 		Handler: &httpAPI{store: store},
 	}
-
-	go func() {
-		if err := server.ListenAndServe(); err != nil {
-			log.Fatal(err)
-		}
-	}()
+	go server.ListenAndServe()
+	fmt.Printf("HTTP Server Listening on %d\n", port)
 }
