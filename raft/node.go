@@ -3,7 +3,6 @@ package raft
 import (
 	"context"
 	"errors"
-	"fmt"
 
 	pb "github.com/TomStuart92/asfalis/raft/raftpb"
 )
@@ -478,7 +477,6 @@ func (n *node) stepWithWaitOption(ctx context.Context, m pb.Message, wait bool) 
 func (n *node) Ready() <-chan Ready { return n.readyc }
 
 func (n *node) Advance() {
-	fmt.Println("Advance")
 	select {
 	case n.advancec <- struct{}{}:
 	case <-n.done:
