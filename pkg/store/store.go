@@ -75,7 +75,7 @@ func (store *Store) readCommits(commitChannel <-chan *string, errorChannel <-cha
 }
 
 // New returns a new store instance
-func New(proposeChannel chan<- string, commitChannel chan<- *string) (store *Store) {
+func New(proposeChannel chan<- string, commitChannel <-chan *string) (store *Store) {
 	return &Store{&sync.Mutex{}, proposeChannel, make(map[string]*Record)}
 }
 
