@@ -36,6 +36,7 @@ type keyValue struct {
 func NewDistributedStore(snapshotter Snapper, proposeC chan<- string, commitC <-chan *string, errorC <-chan error) *DistributedStore {
 	store := NewStore()
 	s := &DistributedStore{proposeC, commitC, errorC, store, snapshotter}
+	s.readCommits()
 	go s.readCommits()
 	return s
 }
