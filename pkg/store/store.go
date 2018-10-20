@@ -1,85 +1,112 @@
+// Copyright 2015 The etcd Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package store
 
 import (
 	"bytes"
 	"encoding/gob"
+	"encoding/json"
 	"log"
 	"sync"
+
+	"github.com/TomStuart92/asfalis/pkg/snap"
 )
 
-// Record holds wraps a keys value
-type Record struct {
-	Key   string
-	Value string
-}
-
-// Store holds key-record Map
+// a key-value store backed by raft
 type Store struct {
-	*sync.Mutex
-	proposeChannel chan<- string
-	Values         map[string]*Record
+	proposeC    chan<- string // channel for proposing updates
+	mu          sync.RWMutex
+	kvStore     map[string]string // current committed key-value pairs
+	snapshotter *snap.Snapshotter
 }
 
-// Set a value in the store
-func (store *Store) Set(key string, value string) (result Record, err error) {
-	record := Record{key, value}
-	store.propose(record)
-	return record, nil
+type kv struct {
+	Key string
+	Val string
 }
 
-// Get a value from the store
-func (store *Store) Get(key string) (value string, ok bool) {
-	store.Lock()
-	record, present := store.Values[key]
-	store.Unlock()
-	if !present {
-		return "", present
-	}
-	return record.Value, present
+func NewKVStore(snapshotter *snap.Snapshotter, proposeC chan<- string, commitC <-chan *string, errorC <-chan error) *Store {
+	s := &Store{proposeC: proposeC, kvStore: make(map[string]string), snapshotter: snapshotter}
+	// replay log into key-value map
+	s.readCommits(commitC, errorC)
+	// read commits from raft into kvStore map until error
+	go s.readCommits(commitC, errorC)
+	return s
 }
 
-// Delete a value from the store
-func (store *Store) Delete(key string) (ok bool, err error) {
-	record := Record{Key: key, Value: ""}
-	store.propose(record)
-	return true, nil
+func (s *Store) Lookup(key string) (string, bool) {
+	s.mu.RLock()
+	v, ok := s.kvStore[key]
+	s.mu.RUnlock()
+	return v, ok
 }
 
-func (store *Store) propose(record Record) {
-	var buffer bytes.Buffer
-	if err := gob.NewEncoder(&buffer).Encode(record); err != nil {
+func (s *Store) Propose(k string, v string) {
+	var buf bytes.Buffer
+	if err := gob.NewEncoder(&buf).Encode(kv{k, v}); err != nil {
 		log.Fatal(err)
 	}
-	store.proposeChannel <- buffer.String()
+	s.proposeC <- buf.String()
 }
 
-func (store *Store) readCommits(commitChannel <-chan *string, errorChannel <-chan error) {
-	for data := range commitChannel {
+func (s *Store) readCommits(commitC <-chan *string, errorC <-chan error) {
+	for data := range commitC {
 		if data == nil {
-			log.Printf("Finished Processing Updates")
+			// done replaying log; new data incoming
+			// OR signaled to load snapshot
+			snapshot, err := s.snapshotter.Load()
+			if err == snap.ErrNoSnapshot {
+				return
+			}
+			if err != nil {
+				log.Panic(err)
+			}
+			log.Printf("loading snapshot at term %d and index %d", snapshot.Metadata.Term, snapshot.Metadata.Index)
+			if err := s.recoverFromSnapshot(snapshot.Data); err != nil {
+				log.Panic(err)
+			}
 			continue
 		}
 
-		var record Record
+		var dataKv kv
 		dec := gob.NewDecoder(bytes.NewBufferString(*data))
-		if err := dec.Decode(&record); err != nil {
-			log.Fatalf("Could Not Decode Message (%v)", err)
+		if err := dec.Decode(&dataKv); err != nil {
+			log.Fatalf("raftexample: could not decode message (%v)", err)
 		}
-		store.Lock()
-		store.Values[record.Key] = &record
-		store.Unlock()
+		s.mu.Lock()
+		s.kvStore[dataKv.Key] = dataKv.Val
+		s.mu.Unlock()
 	}
-	if err, ok := <-errorChannel; ok {
+	if err, ok := <-errorC; ok {
 		log.Fatal(err)
 	}
 }
 
-// New returns a new store instance
-func New(proposeChannel chan<- string, commitChannel <-chan *string) (store *Store) {
-	return &Store{&sync.Mutex{}, proposeChannel, make(map[string]*Record)}
+func (s *Store) GetSnapshot() ([]byte, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return json.Marshal(s.kvStore)
 }
 
-// GetSnapshot returns a snapshot of current state
-func (store *Store) GetSnapshot() ([]byte, error) {
-	return []byte{}, nil
+func (s *Store) recoverFromSnapshot(snapshot []byte) error {
+	var store map[string]string
+	if err := json.Unmarshal(snapshot, &store); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	s.kvStore = store
+	s.mu.Unlock()
+	return nil
 }

@@ -1,17 +1,18 @@
-package http
+package api
 
 import (
-	"fmt"
 	"io/ioutil"
 	"log"
 	"net/http"
 	"strconv"
 
+	"github.com/TomStuart92/asfalis/pkg/raft/raftpb"
 	"github.com/TomStuart92/asfalis/pkg/store"
 )
 
 type httpAPI struct {
-	store *store.Store
+	store       *store.Store
+	confChangeC chan<- raftpb.ConfChange
 }
 
 func (h *httpAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -24,22 +25,18 @@ func (h *httpAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Failed to PUT", http.StatusBadRequest)
 			return
 		}
-		h.store.Set(key, string(value))
+		h.store.Propose(key, string(value))
 		w.WriteHeader(http.StatusNoContent)
 	case r.Method == "GET":
-		if value, ok := h.store.Get(key); ok {
+		if value, ok := h.store.Lookup(key); ok {
 			w.Write([]byte(value))
 		} else {
 			http.Error(w, "Failed to GET", http.StatusNotFound)
 		}
 	case r.Method == "DELETE":
-		if ok, err := h.store.Delete(key); ok {
-			w.WriteHeader(http.StatusNoContent)
-			return
-		} else {
-			log.Printf("Failed to DELETE (%v)\n", err)
-			http.Error(w, "Failed to DELETE", http.StatusNotFound)
-		}
+		h.store.Propose(key, "")
+		w.WriteHeader(http.StatusNoContent)
+		return
 	default:
 		w.Header().Set("Allow", "PUT")
 		w.Header().Add("Allow", "GET")
@@ -50,11 +47,22 @@ func (h *httpAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 // ServeHTTP starts HTTP server
-func ServeHTTP(port int, store *store.Store) {
-	server := http.Server{
-		Addr:    ":" + strconv.Itoa(port),
-		Handler: &httpAPI{store: store},
+func ServeHTTP(kv *store.Store, port int, confChangeC chan<- raftpb.ConfChange, errorC <-chan error) {
+	srv := http.Server{
+		Addr: ":" + strconv.Itoa(port),
+		Handler: &httpAPI{
+			store:       kv,
+			confChangeC: confChangeC,
+		},
 	}
-	server.ListenAndServe()
-	fmt.Printf("HTTP Server Listening on %d\n", port)
+	go func() {
+		if err := srv.ListenAndServe(); err != nil {
+			log.Fatal(err)
+		}
+	}()
+
+	// exit when raft goes down
+	if err, ok := <-errorC; ok {
+		log.Fatal(err)
+	}
 }
