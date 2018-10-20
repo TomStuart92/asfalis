@@ -1,112 +1,53 @@
-// Copyright 2015 The etcd Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
 package store
 
 import (
-	"bytes"
-	"encoding/gob"
 	"encoding/json"
-	"log"
 	"sync"
-
-	"github.com/TomStuart92/asfalis/pkg/snap"
 )
 
-// a key-value store backed by raft
+// Store is a simple thread-safe key-value store
 type Store struct {
-	proposeC    chan<- string // channel for proposing updates
-	mu          sync.RWMutex
-	kvStore     map[string]string // current committed key-value pairs
-	snapshotter *snap.Snapshotter
+	mu     sync.RWMutex
+	values map[string]string
 }
 
-type kv struct {
-	Key string
-	Val string
+// NewStore returns a new instance of a store
+func NewStore() *Store {
+	return &Store{values: make(map[string]string)}
 }
 
-func NewKVStore(snapshotter *snap.Snapshotter, proposeC chan<- string, commitC <-chan *string, errorC <-chan error) *Store {
-	s := &Store{proposeC: proposeC, kvStore: make(map[string]string), snapshotter: snapshotter}
-	// replay log into key-value map
-	s.readCommits(commitC, errorC)
-	// read commits from raft into kvStore map until error
-	go s.readCommits(commitC, errorC)
-	return s
-}
-
-func (s *Store) Lookup(key string) (string, bool) {
+// Get retrieves a value from the store
+func (s *Store) Get(key string) (string, bool) {
 	s.mu.RLock()
-	v, ok := s.kvStore[key]
+	v, ok := s.values[key]
 	s.mu.RUnlock()
 	return v, ok
 }
 
-func (s *Store) Propose(k string, v string) {
-	var buf bytes.Buffer
-	if err := gob.NewEncoder(&buf).Encode(kv{k, v}); err != nil {
-		log.Fatal(err)
-	}
-	s.proposeC <- buf.String()
+// Set sets a value in the store
+func (s *Store) Set(key string, value string) {
+	s.mu.Lock()
+	s.values[key] = value
+	s.mu.Unlock()
 }
 
-func (s *Store) readCommits(commitC <-chan *string, errorC <-chan error) {
-	for data := range commitC {
-		if data == nil {
-			// done replaying log; new data incoming
-			// OR signaled to load snapshot
-			snapshot, err := s.snapshotter.Load()
-			if err == snap.ErrNoSnapshot {
-				return
-			}
-			if err != nil {
-				log.Panic(err)
-			}
-			log.Printf("loading snapshot at term %d and index %d", snapshot.Metadata.Term, snapshot.Metadata.Index)
-			if err := s.recoverFromSnapshot(snapshot.Data); err != nil {
-				log.Panic(err)
-			}
-			continue
-		}
-
-		var dataKv kv
-		dec := gob.NewDecoder(bytes.NewBufferString(*data))
-		if err := dec.Decode(&dataKv); err != nil {
-			log.Fatalf("raftexample: could not decode message (%v)", err)
-		}
-		s.mu.Lock()
-		s.kvStore[dataKv.Key] = dataKv.Val
-		s.mu.Unlock()
-	}
-	if err, ok := <-errorC; ok {
-		log.Fatal(err)
-	}
+// Delete deletes a value from the store
+func (s *Store) Delete(key string) {
+	s.mu.Lock()
+	delete(s.values, key)
+	s.mu.Unlock()
 }
 
+// GetSnapshot returns a json representation of the values in the store.
 func (s *Store) GetSnapshot() ([]byte, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return json.Marshal(s.kvStore)
+	return json.Marshal(s.values)
 }
 
-func (s *Store) recoverFromSnapshot(snapshot []byte) error {
-	var store map[string]string
-	if err := json.Unmarshal(snapshot, &store); err != nil {
-		return err
-	}
+// SetSnapshot replaces the underlying keyValue mappings with a new set
+func (s *Store) SetSnapshot(snapshot map[string]string) {
 	s.mu.Lock()
-	s.kvStore = store
+	s.values = snapshot
 	s.mu.Unlock()
-	return nil
 }

@@ -11,7 +11,7 @@ import (
 )
 
 type httpAPI struct {
-	store       *store.Store
+	store       *store.DistributedStore
 	confChangeC chan<- raftpb.ConfChange
 }
 
@@ -47,7 +47,7 @@ func (h *httpAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 // ServeHTTP starts HTTP server
-func ServeHTTP(kv *store.Store, port int, confChangeC chan<- raftpb.ConfChange, errorC <-chan error) {
+func ServeHTTP(kv *store.DistributedStore, port int, confChangeC chan<- raftpb.ConfChange, errorC <-chan error) {
 	srv := http.Server{
 		Addr: ":" + strconv.Itoa(port),
 		Handler: &httpAPI{

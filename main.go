@@ -37,11 +37,11 @@ func main() {
 	defer close(confChangeC)
 
 	// raft provides a commit stream for the proposals from the http api
-	var kvs *store.Store
+	var kvs *store.DistributedStore
 	getSnapshot := func() ([]byte, error) { return kvs.GetSnapshot() }
 	commitC, errorC, snapshotterReady := easyraft.NewRaftNode(*id, strings.Split(*cluster, ","), *join, getSnapshot, proposeC, confChangeC)
 
-	kvs = store.NewKVStore(<-snapshotterReady, proposeC, commitC, errorC)
+	kvs = store.NewDistributedStore(<-snapshotterReady, proposeC, commitC, errorC)
 
 	// the key-value http handler will propose updates to raft
 	api.ServeHTTP(kvs, *kvport, confChangeC, errorC)
