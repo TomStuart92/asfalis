@@ -16,7 +16,10 @@ package main
 
 import (
 	"flag"
+	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 
 	"github.com/TomStuart92/asfalis/pkg/api"
 	"github.com/TomStuart92/asfalis/pkg/easyraft"
@@ -25,6 +28,9 @@ import (
 )
 
 func main() {
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, os.Interrupt, syscall.SIGTERM, syscall.SIGINT)
+
 	cluster := flag.String("cluster", "http://127.0.0.1:9021", "comma separated cluster peers")
 	id := flag.Int("id", 1, "node ID")
 	kvport := flag.Int("port", 9121, "key-value server port")

@@ -38,7 +38,7 @@ func TestGetRecord(t *testing.T) {
 		t.Error(err)
 	}
 	if res.StatusCode != http.StatusOK {
-		t.Errorf("Response code was %v; want 204", res.StatusCode)
+		t.Errorf("Response code was %v; want 200", res.StatusCode)
 	}
 	if body, _ := ioutil.ReadAll(res.Body); string(body) != "Value" {
 		t.Errorf("Incorrect Value got %s, want value", body)
