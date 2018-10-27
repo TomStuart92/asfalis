@@ -9,7 +9,6 @@ go build .
 echo "Starting Single Node Server"
 ./asfalis --id 1 --cluster http://127.0.0.1:12379 --port 12380 &
 SERVER_PID=$!;
-echo $SERVER_PID
 sleep 5
 
 # Run Tests

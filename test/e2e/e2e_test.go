@@ -44,3 +44,33 @@ func TestGetRecord(t *testing.T) {
 		t.Errorf("Incorrect Value got %s, want value", body)
 	}
 }
+
+func TestDeleteRecord(t *testing.T) {
+	client := &http.Client{}
+	req, _ := http.NewRequest("PUT", "http://127.0.0.1:12380/key", strings.NewReader("Value"))
+	res, err := client.Do(req)
+	if err != nil {
+		t.Error(err)
+	}
+	if res.StatusCode != http.StatusNoContent {
+		t.Errorf("Response code was %v; want 204", res.StatusCode)
+	}
+	time.Sleep(2 * time.Second)
+	req, _ = http.NewRequest("DELETE", "http://127.0.0.1:12380/key", nil)
+	res, err = client.Do(req)
+	if err != nil {
+		t.Error(err)
+	}
+	if res.StatusCode != http.StatusNoContent {
+		t.Errorf("Response code was %v; want 204", res.StatusCode)
+	}
+	time.Sleep(2 * time.Second)
+	req, _ = http.NewRequest("GET", "http://127.0.0.1:12380/key", nil)
+	res, err = client.Do(req)
+	if err != nil {
+		t.Error(err)
+	}
+	if res.StatusCode != http.StatusNotFound {
+		t.Errorf("Response code was %v; want 404", res.StatusCode)
+	}
+}

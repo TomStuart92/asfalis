@@ -4,7 +4,7 @@ import (
 	"io"
 
 	"github.com/TomStuart92/asfalis/pkg/raft/raftpb"
-	"go.etcd.io/etcd/pkg/ioutil"
+	"github.com/TomStuart92/asfalis/pkg/utils"
 )
 
 // Message is a struct that contains a raft Message and a ReadCloser. The type
@@ -25,7 +25,7 @@ type Message struct {
 func NewMessage(rs raftpb.Message, rc io.ReadCloser, rcSize int64) *Message {
 	return &Message{
 		Message:    rs,
-		ReadCloser: ioutil.NewExactReadCloser(rc, rcSize),
+		ReadCloser: utils.NewExactReadCloser(rc, rcSize),
 		TotalSize:  int64(rs.Size()) + rcSize,
 		closeC:     make(chan bool, 1),
 	}

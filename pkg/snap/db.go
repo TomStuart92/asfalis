@@ -7,11 +7,8 @@ import (
 	"io/ioutil"
 	"os"
 	"path/filepath"
-	"time"
 
-	humanize "github.com/dustin/go-humanize"
-	"go.etcd.io/etcd/pkg/fileutil"
-	"go.uber.org/zap"
+	"github.com/TomStuart92/asfalis/pkg/utils"
 )
 
 var ErrNoDBSnapshot = errors.New("snap: snapshot file doesn't exist")
@@ -19,7 +16,6 @@ var ErrNoDBSnapshot = errors.New("snap: snapshot file doesn't exist")
 // SaveDBFrom saves snapshot of the database from the given reader. It
 // guarantees the save operation is atomic.
 func (s *Snapshotter) SaveDBFrom(r io.Reader, id uint64) (int64, error) {
-	start := time.Now()
 
 	f, err := ioutil.TempFile(s.dir, "tmp")
 	if err != nil {
@@ -28,9 +24,7 @@ func (s *Snapshotter) SaveDBFrom(r io.Reader, id uint64) (int64, error) {
 	var n int64
 	n, err = io.Copy(f, r)
 	if err == nil {
-		fsyncStart := time.Now()
-		err = fileutil.Fsync(f)
-		snapDBFsyncSec.Observe(time.Since(fsyncStart).Seconds())
+		err = utils.Fsync(f)
 	}
 	f.Close()
 	if err != nil {
@@ -38,7 +32,7 @@ func (s *Snapshotter) SaveDBFrom(r io.Reader, id uint64) (int64, error) {
 		return n, err
 	}
 	fn := s.dbFilePath(id)
-	if fileutil.Exist(fn) {
+	if utils.Exist(fn) {
 		os.Remove(f.Name())
 		return n, nil
 	}
@@ -48,39 +42,21 @@ func (s *Snapshotter) SaveDBFrom(r io.Reader, id uint64) (int64, error) {
 		return n, err
 	}
 
-	if s.lg != nil {
-		s.lg.Info(
-			"saved database snapshot to disk",
-			zap.String("path", fn),
-			zap.Int64("bytes", n),
-			zap.String("size", humanize.Bytes(uint64(n))),
-		)
-	} else {
-		plog.Infof("saved database snapshot to disk [total bytes: %d]", n)
-	}
-
-	snapDBSaveSec.Observe(time.Since(start).Seconds())
+	fmt.Printf("saved database snapshot to disk [total bytes: %d]", n)
 	return n, nil
 }
 
 // DBFilePath returns the file path for the snapshot of the database with
 // given id. If the snapshot does not exist, it returns error.
 func (s *Snapshotter) DBFilePath(id uint64) (string, error) {
-	if _, err := fileutil.ReadDir(s.dir); err != nil {
+	if _, err := utils.ReadDir(s.dir); err != nil {
 		return "", err
 	}
 	fn := s.dbFilePath(id)
-	if fileutil.Exist(fn) {
+	if utils.Exist(fn) {
 		return fn, nil
 	}
-	if s.lg != nil {
-		s.lg.Warn(
-			"failed to find [SNAPSHOT-INDEX].snap.db",
-			zap.Uint64("snapshot-index", id),
-			zap.String("snapshot-file-path", fn),
-			zap.Error(ErrNoDBSnapshot),
-		)
-	}
+	fmt.Printf("failed to find [SNAPSHOT-INDEX].snap.db")
 	return "", ErrNoDBSnapshot
 }
 

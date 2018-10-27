@@ -60,8 +60,8 @@ func (s *DistributedStore) GetSnapshot() ([]byte, error) {
 	return s.store.GetSnapshot()
 }
 
-// readCommits loops through commits in the commitC channel, and applies them as
-// appropriate
+// readCommits loops through commits in the commitC channel
+//  and applies them as appropriate
 func (s *DistributedStore) readCommits() {
 	for data := range s.commitC {
 		if data == nil {
@@ -84,7 +84,11 @@ func (s *DistributedStore) readCommits() {
 		if err := dec.Decode(&kv); err != nil {
 			log.Fatalf("Failed to decode message (%v)", err)
 		}
-		s.store.Set(kv.Key, kv.Value)
+		if kv.Value == "" {
+			s.store.Delete(kv.Key)
+		} else {
+			s.store.Set(kv.Key, kv.Value)
+		}
 	}
 	if err, ok := <-s.errorC; ok {
 		log.Fatal(err)
