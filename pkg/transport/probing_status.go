@@ -3,7 +3,6 @@ package transport
 import (
 	"time"
 
-	"github.com/prometheus/client_golang/prometheus"
 	"github.com/xiang90/probing"
 	"go.uber.org/zap"
 )
@@ -24,7 +23,7 @@ var (
 	statusErrorInterval      = 5 * time.Second
 )
 
-func addPeerToProber(lg *zap.Logger, p probing.Prober, id string, us []string, roundTripperName string, rttSecProm *prometheus.HistogramVec) {
+func addPeerToProber(lg *zap.Logger, p probing.Prober, id string, us []string, roundTripperName string) {
 	hus := make([]string, len(us))
 	for i := range us {
 		hus[i] = us[i] + ProbingPrefix
@@ -42,10 +41,10 @@ func addPeerToProber(lg *zap.Logger, p probing.Prober, id string, us []string, r
 		return
 	}
 
-	go monitorProbingStatus(lg, s, id, roundTripperName, rttSecProm)
+	go monitorProbingStatus(lg, s, id, roundTripperName)
 }
 
-func monitorProbingStatus(lg *zap.Logger, s probing.Status, id string, roundTripperName string, rttSecProm *prometheus.HistogramVec) {
+func monitorProbingStatus(lg *zap.Logger, s probing.Status, id string, roundTripperName string) {
 	// set the first interval short to log error early.
 	interval := statusErrorInterval
 	for {
@@ -81,7 +80,6 @@ func monitorProbingStatus(lg *zap.Logger, s probing.Status, id string, roundTrip
 					plog.Warningf("the clock difference against peer %s is too high [%v > %v]", id, s.ClockDiff(), time.Second)
 				}
 			}
-			rttSecProm.WithLabelValues(id).Observe(s.SRTT().Seconds())
 
 		case <-s.StopNotify():
 			return

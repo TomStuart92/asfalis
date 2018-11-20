@@ -4,6 +4,9 @@ asfalís is a distributed in memory key-value store written in go. It uses gRPC 
 
 Inspiration is broadly based upon [etcd](https://github.com/etcd-io/etcd). 
 
+# Requirements 
+- Go 1.11.1
+
 
 ## Running
 
@@ -29,7 +32,7 @@ curl -L http://127.0.0.1:12380/my-key
 export GO111MODULE=on
 go run . --id 1 --cluster http://127.0.0.1:12379,http://127.0.0.1:22379,http://127.0.0.1:32379 --port 12380
 go run . --id 2 --cluster http://127.0.0.1:12379,http://127.0.0.1:22379,http://127.0.0.1:32379 --port 22380
-go run .--id 3 --cluster http://127.0.0.1:12379,http://127.0.0.1:22379,http://127.0.0.1:32379 --port 32380
+go run . --id 3 --cluster http://127.0.0.1:12379,http://127.0.0.1:22379,http://127.0.0.1:32379 --port 32380
 ```
 Set A Key:
 ```

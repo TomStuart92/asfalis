@@ -9,7 +9,6 @@ import (
 	"github.com/TomStuart92/asfalis/pkg/raft"
 	"github.com/TomStuart92/asfalis/pkg/raft/raftpb"
 	"github.com/TomStuart92/asfalis/pkg/snap"
-	stats "github.com/TomStuart92/asfalis/pkg/stats"
 	"github.com/coreos/pkg/capnslog"
 	"github.com/xiang90/probing"
 	"go.etcd.io/etcd/pkg/logutil"
@@ -98,10 +97,7 @@ type Transport struct {
 	ClusterID   types.ID   // raft cluster ID for request validation
 	Raft        Raft       // raft state machine, to which the Transport forwards received messages and reports status
 	Snapshotter *snap.Snapshotter
-	ServerStats *stats.ServerStats // used to record general transportation statistics
-	// used to record transportation statistics with followers when
-	// performing as leader in raft protocol
-	LeaderStats *stats.LeaderStats
+
 	// ErrorC is used to report detected critical errors, e.g.,
 	// the member has been permanently removed from the cluster
 	// When an error is received from ErrorC, user should stop raft state
@@ -175,9 +171,6 @@ func (t *Transport) Send(msgs []raftpb.Message) {
 		t.mu.RUnlock()
 
 		if pok {
-			if m.Type == raftpb.MsgApp {
-				t.ServerStats.SendAppendReq(m.Size())
-			}
 			p.send(m)
 			continue
 		}
@@ -303,10 +296,7 @@ func (t *Transport) AddPeer(id types.ID, us []string) {
 			plog.Panicf("newURLs %+v should never fail: %+v", us, err)
 		}
 	}
-	fs := t.LeaderStats.Follower(id.String())
-	t.peers[id] = startPeer(t, urls, id, fs)
-	addPeerToProber(t.Logger, t.pipelineProber, id.String(), us, RoundTripperNameSnapshot, rttSec)
-	addPeerToProber(t.Logger, t.streamProber, id.String(), us, RoundTripperNameRaftMessage, rttSec)
+	t.peers[id] = startPeer(t, urls, id)
 
 	if t.Logger != nil {
 		t.Logger.Info(
@@ -346,7 +336,6 @@ func (t *Transport) removePeer(id types.ID) {
 		}
 	}
 	delete(t.peers, id)
-	delete(t.LeaderStats.Followers, id.String())
 	t.pipelineProber.Remove(id.String())
 	t.streamProber.Remove(id.String())
 
@@ -379,9 +368,9 @@ func (t *Transport) UpdatePeer(id types.ID, us []string) {
 	t.peers[id].update(urls)
 
 	t.pipelineProber.Remove(id.String())
-	addPeerToProber(t.Logger, t.pipelineProber, id.String(), us, RoundTripperNameSnapshot, rttSec)
+	addPeerToProber(t.Logger, t.pipelineProber, id.String(), us, RoundTripperNameSnapshot)
 	t.streamProber.Remove(id.String())
-	addPeerToProber(t.Logger, t.streamProber, id.String(), us, RoundTripperNameRaftMessage, rttSec)
+	addPeerToProber(t.Logger, t.streamProber, id.String(), us, RoundTripperNameRaftMessage)
 
 	if t.Logger != nil {
 		t.Logger.Info(

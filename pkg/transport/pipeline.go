@@ -10,7 +10,6 @@ import (
 
 	"github.com/TomStuart92/asfalis/pkg/raft"
 	"github.com/TomStuart92/asfalis/pkg/raft/raftpb"
-	"github.com/TomStuart92/asfalis/pkg/stats"
 	"go.etcd.io/etcd/pkg/pbutil"
 	"go.etcd.io/etcd/pkg/types"
 	"go.uber.org/zap"
@@ -35,10 +34,7 @@ type pipeline struct {
 	status *peerStatus
 	raft   Raft
 	errorc chan error
-	// deprecate when we depercate v2 API
-	followerStats *stats.FollowerStats
-
-	msgc chan raftpb.Message
+	msgc   chan raftpb.Message
 	// wait for the handling routines
 	wg    sync.WaitGroup
 	stopc chan struct{}
@@ -84,32 +80,23 @@ func (p *pipeline) handle() {
 	for {
 		select {
 		case m := <-p.msgc:
-			start := time.Now()
 			err := p.post(pbutil.MustMarshal(&m))
-			end := time.Now()
 
 			if err != nil {
 				p.status.deactivate(failureType{source: pipelineMsg, action: "write"}, err.Error())
 
-				if m.Type == raftpb.MsgApp && p.followerStats != nil {
-					p.followerStats.Fail()
-				}
 				p.raft.ReportUnreachable(m.To)
 				if isMsgSnap(m) {
 					p.raft.ReportSnapshot(m.To, raft.SnapshotFailure)
 				}
-				sentFailures.WithLabelValues(types.ID(m.To).String()).Inc()
 				continue
 			}
 
 			p.status.activate()
-			if m.Type == raftpb.MsgApp && p.followerStats != nil {
-				p.followerStats.Succ(end.Sub(start))
-			}
 			if isMsgSnap(m) {
 				p.raft.ReportSnapshot(m.To, raft.SnapshotFinish)
 			}
-			sentBytes.WithLabelValues(types.ID(m.To).String()).Add(float64(m.Size()))
+
 		case <-p.stopc:
 			return
 		}

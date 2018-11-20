@@ -19,11 +19,17 @@ func replayProposals(proposeC <-chan string, commitC chan<- *string) {
 	}
 }
 
+func loadDummyRecord(commitC chan *string) {
+	var s *string
+	commitC <- s
+}
+
 func TestNoRecordOnLookup(t *testing.T) {
 	snapshotter := snapStub{}
 	proposeC := make(chan string, 1)
 	commitC := make(chan *string, 1)
 	errorC := make(chan error, 1)
+	loadDummyRecord(commitC)
 	d := NewDistributedStore(snapshotter, proposeC, commitC, errorC)
 	_, ok := d.Lookup("key")
 	if ok {

@@ -10,6 +10,7 @@ import (
 	"github.com/TomStuart92/asfalis/pkg/snap"
 )
 
+// Snapper is an interface to load raft snapshots
 type Snapper interface {
 	Load() (*raftpb.Snapshot, error)
 }
@@ -34,6 +35,7 @@ type keyValue struct {
 
 // NewDistributedStore creates a new instance of a DistributedStore
 func NewDistributedStore(snapshotter Snapper, proposeC chan<- string, commitC <-chan *string, errorC <-chan error) *DistributedStore {
+	log.SetPrefix("store: ")
 	store := NewStore()
 	s := &DistributedStore{proposeC, commitC, errorC, store, snapshotter}
 	s.readCommits()
@@ -48,6 +50,7 @@ func (s *DistributedStore) Lookup(key string) (string, bool) {
 
 // Propose proposed a change to the store through the proposeC channel
 func (s *DistributedStore) Propose(key string, value string) {
+	log.Printf("Proposing %s => %s", key, value)
 	var buf bytes.Buffer
 	if err := gob.NewEncoder(&buf).Encode(keyValue{Key: key, Value: value}); err != nil {
 		log.Fatal(err)
@@ -85,8 +88,10 @@ func (s *DistributedStore) readCommits() {
 			log.Fatalf("Failed to decode message (%v)", err)
 		}
 		if kv.Value == "" {
+			log.Printf("deleting %s ", kv.Key)
 			s.store.Delete(kv.Key)
 		} else {
+			log.Printf("setting %s => %s", kv.Key, kv.Value)
 			s.store.Set(kv.Key, kv.Value)
 		}
 	}

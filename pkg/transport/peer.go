@@ -8,7 +8,6 @@ import (
 	"github.com/TomStuart92/asfalis/pkg/raft"
 	"github.com/TomStuart92/asfalis/pkg/raft/raftpb"
 	"github.com/TomStuart92/asfalis/pkg/snap"
-	"github.com/TomStuart92/asfalis/pkg/stats"
 	"go.etcd.io/etcd/pkg/types"
 	"go.uber.org/zap"
 	"golang.org/x/time/rate"
@@ -108,7 +107,7 @@ type peer struct {
 	stopc  chan struct{}
 }
 
-func startPeer(t *Transport, urls types.URLs, peerID types.ID, fs *stats.FollowerStats) *peer {
+func startPeer(t *Transport, urls types.URLs, peerID types.ID) *peer {
 	if t.Logger != nil {
 		t.Logger.Info("starting remote peer", zap.String("remote-peer-id", peerID.String()))
 	} else {
@@ -127,13 +126,12 @@ func startPeer(t *Transport, urls types.URLs, peerID types.ID, fs *stats.Followe
 	errorc := t.ErrorC
 	r := t.Raft
 	pipeline := &pipeline{
-		peerID:        peerID,
-		tr:            t,
-		picker:        picker,
-		status:        status,
-		followerStats: fs,
-		raft:          r,
-		errorc:        errorc,
+		peerID: peerID,
+		tr:     t,
+		picker: picker,
+		status: status,
+		raft:   r,
+		errorc: errorc,
 	}
 	pipeline.start()
 
@@ -144,8 +142,8 @@ func startPeer(t *Transport, urls types.URLs, peerID types.ID, fs *stats.Followe
 		r:              r,
 		status:         status,
 		picker:         picker,
-		msgAppV2Writer: startStreamWriter(t.Logger, t.ID, peerID, status, fs, r),
-		writer:         startStreamWriter(t.Logger, t.ID, peerID, status, fs, r),
+		msgAppV2Writer: startStreamWriter(t.Logger, t.ID, peerID, status, r),
+		writer:         startStreamWriter(t.Logger, t.ID, peerID, status, r),
 		pipeline:       pipeline,
 		snapSender:     newSnapshotSender(t, picker, peerID, status),
 		recvc:          make(chan raftpb.Message, recvBufSize),
@@ -261,7 +259,6 @@ func (p *peer) send(m raftpb.Message) {
 				plog.Debugf("dropped %s to %s since %s's sending buffer is full", m.Type, p.id, name)
 			}
 		}
-		sentFailures.WithLabelValues(types.ID(m.To).String()).Inc()
 	}
 }
 

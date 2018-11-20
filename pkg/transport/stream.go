@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/TomStuart92/asfalis/pkg/raft/raftpb"
-	stats "github.com/TomStuart92/asfalis/pkg/stats"
 	"github.com/coreos/go-semver/semver"
 	"go.etcd.io/etcd/pkg/httputil"
 	"go.etcd.io/etcd/pkg/transport"
@@ -99,7 +98,6 @@ type streamWriter struct {
 	peerID  types.ID
 
 	status *peerStatus
-	fs     *stats.FollowerStats
 	r      Raft
 
 	mu      sync.Mutex // guard field working and closer
@@ -114,7 +112,7 @@ type streamWriter struct {
 
 // startStreamWriter creates a streamWrite and starts a long running go-routine that accepts
 // messages and writes to the attached outgoing connection.
-func startStreamWriter(lg *zap.Logger, local, id types.ID, status *peerStatus, fs *stats.FollowerStats, r Raft) *streamWriter {
+func startStreamWriter(lg *zap.Logger, local, id types.ID, status *peerStatus, r Raft) *streamWriter {
 	w := &streamWriter{
 		lg: lg,
 
@@ -122,7 +120,6 @@ func startStreamWriter(lg *zap.Logger, local, id types.ID, status *peerStatus, f
 		peerID:  id,
 
 		status: status,
-		fs:     fs,
 		r:      r,
 		msgc:   make(chan raftpb.Message, streamBufSize),
 		connc:  make(chan *outgoingConn),
@@ -164,14 +161,11 @@ func (cw *streamWriter) run() {
 			if err == nil {
 				flusher.Flush()
 				batched = 0
-				sentBytes.WithLabelValues(cw.peerID.String()).Add(float64(unflushed))
 				unflushed = 0
 				continue
 			}
 
 			cw.status.deactivate(failureType{source: t.String(), action: "heartbeat"}, err.Error())
-
-			sentFailures.WithLabelValues(cw.peerID.String()).Inc()
 			cw.close()
 			if cw.lg != nil {
 				cw.lg.Warn(
@@ -192,7 +186,6 @@ func (cw *streamWriter) run() {
 
 				if len(msgc) == 0 || batched > streamBufSize/2 {
 					flusher.Flush()
-					sentBytes.WithLabelValues(cw.peerID.String()).Add(float64(unflushed))
 					unflushed = 0
 					batched = 0
 				} else {
@@ -216,7 +209,6 @@ func (cw *streamWriter) run() {
 			}
 			heartbeatc, msgc = nil, nil
 			cw.r.ReportUnreachable(m.To)
-			sentFailures.WithLabelValues(cw.peerID.String()).Inc()
 
 		case conn := <-cw.connc:
 			cw.mu.Lock()
@@ -224,7 +216,7 @@ func (cw *streamWriter) run() {
 			t = conn.t
 			switch conn.t {
 			case streamTypeMsgAppV2:
-				enc = newMsgAppV2Encoder(conn.Writer, cw.fs)
+				enc = newMsgAppV2Encoder(conn.Writer)
 			case streamTypeMessage:
 				enc = &messageEncoder{w: conn.Writer}
 			default:
@@ -504,11 +496,6 @@ func (cr *streamReader) decodeLoop(rc io.ReadCloser, t streamType) error {
 			cr.mu.Unlock()
 			return err
 		}
-
-		// gofail-go: var raftDropHeartbeat struct{}
-		// continue labelRaftDropHeartbeat
-		receivedBytes.WithLabelValues(types.ID(m.From).String()).Add(float64(m.Size()))
-
 		cr.mu.Lock()
 		paused := cr.paused
 		cr.mu.Unlock()
@@ -559,7 +546,6 @@ func (cr *streamReader) decodeLoop(rc io.ReadCloser, t streamType) error {
 					plog.Debugf("dropped %s from %s since receiving buffer is full", m.Type, types.ID(m.From))
 				}
 			}
-			recvFailures.WithLabelValues(types.ID(m.From).String()).Inc()
 		}
 	}
 }

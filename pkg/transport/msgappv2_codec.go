@@ -4,10 +4,8 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
-	"time"
 
 	"github.com/TomStuart92/asfalis/pkg/raft/raftpb"
-	stats "github.com/TomStuart92/asfalis/pkg/stats"
 	"go.etcd.io/etcd/pkg/pbutil"
 	"go.etcd.io/etcd/pkg/types"
 )
@@ -48,8 +46,7 @@ const (
 // | 1      | 8     | length of encoded message |
 // | 9      | n     | encoded message |
 type msgAppV2Encoder struct {
-	w  io.Writer
-	fs *stats.FollowerStats
+	w io.Writer
 
 	term      uint64
 	index     uint64
@@ -58,10 +55,9 @@ type msgAppV2Encoder struct {
 	uint8buf  []byte
 }
 
-func newMsgAppV2Encoder(w io.Writer, fs *stats.FollowerStats) *msgAppV2Encoder {
+func newMsgAppV2Encoder(w io.Writer) *msgAppV2Encoder {
 	return &msgAppV2Encoder{
 		w:         w,
-		fs:        fs,
 		buf:       make([]byte, msgAppV2BufSize),
 		uint64buf: make([]byte, 8),
 		uint8buf:  make([]byte, 1),
@@ -69,7 +65,6 @@ func newMsgAppV2Encoder(w io.Writer, fs *stats.FollowerStats) *msgAppV2Encoder {
 }
 
 func (enc *msgAppV2Encoder) encode(m *raftpb.Message) error {
-	start := time.Now()
 	switch {
 	case isLinkHeartbeatMessage(m):
 		enc.uint8buf[0] = msgTypeLinkHeartbeat
@@ -111,7 +106,6 @@ func (enc *msgAppV2Encoder) encode(m *raftpb.Message) error {
 		if _, err := enc.w.Write(enc.uint64buf); err != nil {
 			return err
 		}
-		enc.fs.Succ(time.Since(start))
 	default:
 		if err := binary.Write(enc.w, binary.BigEndian, msgTypeApp); err != nil {
 			return err
@@ -130,7 +124,6 @@ func (enc *msgAppV2Encoder) encode(m *raftpb.Message) error {
 		if l := len(m.Entries); l > 0 {
 			enc.index = m.Entries[l-1].Index
 		}
-		enc.fs.Succ(time.Since(start))
 	}
 	return nil
 }

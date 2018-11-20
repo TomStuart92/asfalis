@@ -67,7 +67,6 @@ func (g *remote) send(m raftpb.Message) {
 				plog.Debugf("dropped %s to %s since sending buffer is full", m.Type, g.id)
 			}
 		}
-		sentFailures.WithLabelValues(types.ID(m.To).String()).Inc()
 	}
 }
 

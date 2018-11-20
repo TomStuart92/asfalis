@@ -7,13 +7,11 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"strconv"
 	"time"
 
 	"github.com/TomStuart92/asfalis/pkg/raft"
 	"github.com/TomStuart92/asfalis/pkg/raft/raftpb"
 	"github.com/TomStuart92/asfalis/pkg/snap"
-	"github.com/TomStuart92/asfalis/pkg/stats"
 	"github.com/TomStuart92/asfalis/pkg/transport"
 	"github.com/TomStuart92/asfalis/pkg/wal"
 	"github.com/TomStuart92/asfalis/pkg/wal/walpb"
@@ -29,13 +27,13 @@ type easyRaft struct {
 	commitC     chan<- *string           // entries committed to log (k,v)
 	errorC      chan<- error             // errors from raft session
 
-	id          int      // client ID for raft session
-	peers       []string // raft peer URLs
-	join        bool     // node is joining an existing cluster
-	waldir      string   // path to WAL directory
-	snapdir     string   // path to snapshot directory
+	id          int                    // client ID for raft session
+	peers       []string               // raft peer URLs
+	join        bool                   // node is joining an existing cluster
+	waldir      string                 // path to WAL directory
+	snapdir     string                 // path to snapshot directory
 	getSnapshot func() ([]byte, error) // returns a snapshot of application layer data
-	lastIndex   uint64 // index of log at start
+	lastIndex   uint64                 // index of log at start
 
 	confState     raftpb.ConfState
 	snapshotIndex uint64
@@ -279,13 +277,11 @@ func (rc *easyRaft) startRaft() {
 	}
 
 	rc.transport = &transport.Transport{
-		Logger:      zap.NewExample(),
-		ID:          types.ID(rc.id),
-		ClusterID:   0x1000,
-		Raft:        rc,
-		ServerStats: stats.NewServerStats("", ""),
-		LeaderStats: stats.NewLeaderStats(strconv.Itoa(rc.id)),
-		ErrorC:      make(chan error),
+		Logger:    zap.NewExample(),
+		ID:        types.ID(rc.id),
+		ClusterID: 0x1000,
+		Raft:      rc,
+		ErrorC:    make(chan error),
 	}
 
 	rc.transport.Start()
