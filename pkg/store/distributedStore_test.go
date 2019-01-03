@@ -5,12 +5,13 @@ import (
 	"time"
 
 	"github.com/TomStuart92/asfalis/pkg/raft/raftpb"
+	"github.com/TomStuart92/asfalis/pkg/snap"
 )
 
 type snapStub struct{}
 
 func (s snapStub) Load() (*raftpb.Snapshot, error) {
-	return nil, nil
+	return nil, snap.ErrNoSnapshot
 }
 
 func replayProposals(proposeC <-chan string, commitC chan<- *string) {
@@ -42,6 +43,7 @@ func TestPropose(t *testing.T) {
 	proposeC := make(chan string, 1)
 	commitC := make(chan *string, 1)
 	errorC := make(chan error, 1)
+	loadDummyRecord(commitC)
 	d := NewDistributedStore(snapshotter, proposeC, commitC, errorC)
 	d.Propose("key", "value")
 	select {
@@ -54,11 +56,11 @@ func TestPropose(t *testing.T) {
 
 func TestCommit(t *testing.T) {
 	snapshotter := snapStub{}
-	proposeC := make(chan string)
-	commitC := make(chan *string)
-	errorC := make(chan error)
+	proposeC := make(chan string, 1)
+	commitC := make(chan *string, 1)
+	errorC := make(chan error, 1)
+	loadDummyRecord(commitC)
 	d := NewDistributedStore(snapshotter, proposeC, commitC, errorC)
-
 	// replay proposals directly into commits
 	go replayProposals(proposeC, commitC)
 
@@ -77,9 +79,10 @@ func TestCommit(t *testing.T) {
 
 func TestDistributedStoreGetSnapshot(t *testing.T) {
 	snapshotter := snapStub{}
-	proposeC := make(chan string)
-	commitC := make(chan *string)
-	errorC := make(chan error)
+	proposeC := make(chan string, 1)
+	commitC := make(chan *string, 1)
+	errorC := make(chan error, 1)
+	loadDummyRecord(commitC)
 	d := NewDistributedStore(snapshotter, proposeC, commitC, errorC)
 
 	// replay proposals directly into commits
