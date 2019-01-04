@@ -34,7 +34,6 @@ type exactReadCloser struct {
 func (e *exactReadCloser) Read(p []byte) (int, error) {
 	n, err := e.rc.Read(p)
 	e.br += int64(n)
-	fmt.Println(e.br, e.totalBytes, n)
 	if e.br > e.totalBytes {
 		return 0, ErrExpectEOF
 	}

@@ -28,7 +28,7 @@ kill -9 $SERVER_PID_1
 kill -9 $SERVER_PID_2
 kill -9 $SERVER_PID_3
 
-rm -rf raftexample-1
+rm -rf raftexample-*
 rm -rf raftexample-1-snap
 rm -rf raftexample-2
 rm -rf raftexample-2-snap

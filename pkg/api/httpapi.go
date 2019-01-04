@@ -29,7 +29,10 @@ func (h *httpAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	case r.Method == "GET":
 		if value, ok := h.store.Lookup(key); ok {
-			w.Write([]byte(value))
+			_, err := w.Write([]byte(value))
+			if err != nil {
+				log.Printf("Write failed: %v", err)
+			}
 		} else {
 			http.Error(w, "Failed to GET", http.StatusNotFound)
 		}

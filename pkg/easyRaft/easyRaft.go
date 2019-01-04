@@ -140,7 +140,10 @@ func (rc *easyRaft) publishEntries(ents []raftpb.Entry) bool {
 
 		case raftpb.EntryConfChange:
 			var cc raftpb.ConfChange
-			cc.Unmarshal(ents[i].Data)
+			err := cc.Unmarshal(ents[i].Data)
+			if err != nil {
+				log.Printf("Unmarshal failed: %v", err)
+			}
 			rc.confState = *rc.node.ApplyConfChange(cc)
 			switch cc.Type {
 			case raftpb.ConfChangeAddNode:
@@ -217,7 +220,10 @@ func (rc *easyRaft) replayWAL() *wal.WAL {
 	}
 	rc.raftStorage = raft.NewMemoryStorage()
 	if snapshot != nil {
-		rc.raftStorage.ApplySnapshot(*snapshot)
+		err = rc.raftStorage.ApplySnapshot(*snapshot)
+		if err != nil {
+			log.Printf("Failed to Apply Snaphshot: %v", err)
+		}
 	}
 	rc.raftStorage.SetHardState(st)
 
