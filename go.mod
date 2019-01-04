@@ -1,6 +1,7 @@
 module github.com/TomStuart92/asfalis
 
 require (
+	github.com/BurntSushi/toml v0.3.1 // indirect
 	github.com/beorn7/perks v0.0.0-20180321164747-3a771d992973 // indirect
 	github.com/coreos/bbolt v1.3.0 // indirect
 	github.com/coreos/etcd v3.3.10+incompatible // indirect
@@ -39,7 +40,8 @@ require (
 	golang.org/x/crypto v0.0.0-20181012144002-a92615f3c490 // indirect
 	golang.org/x/net v0.0.0-20181011144130-49bb7cea24b1
 	golang.org/x/time v0.0.0-20180412165947-fbb02b2291d2
+	golang.org/x/tools v0.0.0-20180828015842-6cd1fcedba52
 	google.golang.org/grpc v1.15.0
 	gopkg.in/yaml.v2 v2.2.1 // indirect
-	honnef.co/go/tools v0.0.0-20180920025451-e3ad64cb4ed3 // indirect
+	honnef.co/go/tools v0.0.0-20190104064624-c51f1e51d5a3 // indirect
 )

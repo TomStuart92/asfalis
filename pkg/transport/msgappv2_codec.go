@@ -6,7 +6,7 @@ import (
 	"io"
 
 	"github.com/TomStuart92/asfalis/pkg/raft/raftpb"
-	"go.etcd.io/etcd/pkg/pbutil"
+	"github.com/TomStuart92/asfalis/pkg/utils"
 	"go.etcd.io/etcd/pkg/types"
 )
 
@@ -95,7 +95,7 @@ func (enc *msgAppV2Encoder) encode(m *raftpb.Message) error {
 					return err
 				}
 			} else {
-				if _, err := enc.w.Write(pbutil.MustMarshal(&m.Entries[i])); err != nil {
+				if _, err := enc.w.Write(utils.MustMarshal(&m.Entries[i])); err != nil {
 					return err
 				}
 			}
@@ -115,7 +115,7 @@ func (enc *msgAppV2Encoder) encode(m *raftpb.Message) error {
 			return err
 		}
 		// write message
-		if _, err := enc.w.Write(pbutil.MustMarshal(m)); err != nil {
+		if _, err := enc.w.Write(utils.MustMarshal(m)); err != nil {
 			return err
 		}
 
@@ -196,8 +196,7 @@ func (dec *msgAppV2Decoder) decode() (raftpb.Message, error) {
 				}
 			}
 			dec.index++
-			// 1 alloc
-			pbutil.MustUnmarshal(&m.Entries[i], buf)
+			utils.MustUnmarshal(&m.Entries[i], buf)
 		}
 		// decode commit index
 		if _, err := io.ReadFull(dec.r, dec.uint64buf); err != nil {
@@ -213,7 +212,7 @@ func (dec *msgAppV2Decoder) decode() (raftpb.Message, error) {
 		if _, err := io.ReadFull(dec.r, buf); err != nil {
 			return m, err
 		}
-		pbutil.MustUnmarshal(&m, buf)
+		utils.MustUnmarshal(&m, buf)
 
 		dec.term = m.Term
 		dec.index = m.Index

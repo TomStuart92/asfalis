@@ -10,9 +10,9 @@ import (
 
 	"github.com/TomStuart92/asfalis/pkg/raft"
 	"github.com/TomStuart92/asfalis/pkg/snap"
+	"github.com/TomStuart92/asfalis/pkg/utils"
 	humanize "github.com/dustin/go-humanize"
 	"go.etcd.io/etcd/pkg/httputil"
-	pioutil "go.etcd.io/etcd/pkg/ioutil"
 	"go.etcd.io/etcd/pkg/types"
 	"go.uber.org/zap"
 )
@@ -172,7 +172,7 @@ func createSnapBody(lg *zap.Logger, merged snap.Message) io.ReadCloser {
 		}
 	}
 
-	return &pioutil.ReaderAndCloser{
+	return &utils.ReaderAndCloser{
 		Reader: io.MultiReader(buf, merged.ReadCloser),
 		Closer: merged.ReadCloser,
 	}

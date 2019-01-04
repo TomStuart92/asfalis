@@ -8,9 +8,9 @@ import (
 	"sync"
 
 	"github.com/TomStuart92/asfalis/pkg/raft/raftpb"
+	"github.com/TomStuart92/asfalis/pkg/utils"
 	"github.com/TomStuart92/asfalis/pkg/wal/walpb"
 	"go.etcd.io/etcd/pkg/crc"
-	"go.etcd.io/etcd/pkg/pbutil"
 )
 
 const minSectorSize = 512
@@ -157,13 +157,13 @@ func (d *decoder) lastOffset() int64 { return d.lastValidOff }
 
 func mustUnmarshalEntry(d []byte) raftpb.Entry {
 	var e raftpb.Entry
-	pbutil.MustUnmarshal(&e, d)
+	utils.MustUnmarshal(&e, d)
 	return e
 }
 
 func mustUnmarshalState(d []byte) raftpb.HardState {
 	var s raftpb.HardState
-	pbutil.MustUnmarshal(&s, d)
+	utils.MustUnmarshal(&s, d)
 	return s
 }
 

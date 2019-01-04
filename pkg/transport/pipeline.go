@@ -10,7 +10,7 @@ import (
 
 	"github.com/TomStuart92/asfalis/pkg/raft"
 	"github.com/TomStuart92/asfalis/pkg/raft/raftpb"
-	"go.etcd.io/etcd/pkg/pbutil"
+	"github.com/TomStuart92/asfalis/pkg/utils"
 	"go.etcd.io/etcd/pkg/types"
 	"go.uber.org/zap"
 )
@@ -80,7 +80,7 @@ func (p *pipeline) handle() {
 	for {
 		select {
 		case m := <-p.msgc:
-			err := p.post(pbutil.MustMarshal(&m))
+			err := p.post(utils.MustMarshal(&m))
 
 			if err != nil {
 				p.status.deactivate(failureType{source: pipelineMsg, action: "write"}, err.Error())

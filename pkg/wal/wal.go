@@ -13,10 +13,10 @@ import (
 
 	"github.com/TomStuart92/asfalis/pkg/raft"
 	"github.com/TomStuart92/asfalis/pkg/raft/raftpb"
+	"github.com/TomStuart92/asfalis/pkg/utils"
 	"github.com/TomStuart92/asfalis/pkg/wal/walpb"
 	"github.com/coreos/pkg/capnslog"
 	"go.etcd.io/etcd/pkg/fileutil"
-	"go.etcd.io/etcd/pkg/pbutil"
 	"go.uber.org/zap"
 )
 
@@ -395,7 +395,7 @@ func (w *WAL) ReadAll() (metadata []byte, state raftpb.HardState, ents []raftpb.
 
 		case snapshotType:
 			var snap walpb.Snapshot
-			pbutil.MustUnmarshal(&snap, rec.Data)
+			utils.MustUnmarshal(&snap, rec.Data)
 			if snap.Index == w.start.Index {
 				if snap.Term != w.start.Term {
 					state.Reset()
@@ -657,8 +657,7 @@ func (w *WAL) Close() error {
 }
 
 func (w *WAL) saveEntry(e *raftpb.Entry) error {
-	// TODO: add MustMarshalTo to reduce one allocation.
-	b := pbutil.MustMarshal(e)
+	b := utils.MustMarshal(e)
 	rec := &walpb.Record{Type: entryType, Data: b}
 	if err := w.encoder.encode(rec); err != nil {
 		return err
@@ -672,7 +671,7 @@ func (w *WAL) saveState(s *raftpb.HardState) error {
 		return nil
 	}
 	w.state = *s
-	b := pbutil.MustMarshal(s)
+	b := utils.MustMarshal(s)
 	rec := &walpb.Record{Type: stateType, Data: b}
 	return w.encoder.encode(rec)
 }
@@ -713,7 +712,7 @@ func (w *WAL) Save(st raftpb.HardState, ents []raftpb.Entry) error {
 }
 
 func (w *WAL) SaveSnapshot(e walpb.Snapshot) error {
-	b := pbutil.MustMarshal(&e)
+	b := utils.MustMarshal(&e)
 
 	w.mu.Lock()
 	defer w.mu.Unlock()

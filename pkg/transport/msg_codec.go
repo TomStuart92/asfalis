@@ -6,7 +6,7 @@ import (
 	"io"
 
 	"github.com/TomStuart92/asfalis/pkg/raft/raftpb"
-	"go.etcd.io/etcd/pkg/pbutil"
+	"github.com/TomStuart92/asfalis/pkg/utils"
 )
 
 // messageEncoder is a encoder that can encode all kinds of messages.
@@ -19,7 +19,7 @@ func (enc *messageEncoder) encode(m *raftpb.Message) error {
 	if err := binary.Write(enc.w, binary.BigEndian, uint64(m.Size())); err != nil {
 		return err
 	}
-	_, err := enc.w.Write(pbutil.MustMarshal(m))
+	_, err := enc.w.Write(utils.MustMarshal(m))
 	return err
 }
 

@@ -2,14 +2,17 @@ package utils
 
 import "fmt"
 
+// Marshaler presents an interface for marshalling data
 type Marshaler interface {
 	Marshal() (data []byte, err error)
 }
 
+// Unmarshaler presents an interface for marshalling data
 type Unmarshaler interface {
 	Unmarshal(data []byte) error
 }
 
+// MustMarshal is a wrapper which catches any errors from an attempted Marshal
 func MustMarshal(m Marshaler) []byte {
 	d, err := m.Marshal()
 	if err != nil {
@@ -18,24 +21,9 @@ func MustMarshal(m Marshaler) []byte {
 	return d
 }
 
+// MustUnmarshal is a wrapper which catches any errors from an attempted Unmarshal
 func MustUnmarshal(um Unmarshaler, data []byte) {
 	if err := um.Unmarshal(data); err != nil {
 		fmt.Printf("unmarshal should never fail (%v)", err)
 	}
 }
-
-func MaybeUnmarshal(um Unmarshaler, data []byte) bool {
-	if err := um.Unmarshal(data); err != nil {
-		return false
-	}
-	return true
-}
-
-func GetBool(v *bool) (vv bool, set bool) {
-	if v == nil {
-		return false, false
-	}
-	return *v, true
-}
-
-func Boolp(b bool) *bool { return &b }
