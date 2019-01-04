@@ -1,6 +1,6 @@
 # Easyraft package
 
-The easyraft package exists to abstract the underlying raft algorithm from the application. It brings together the WAL, Transport, Snap and Raft packages and provides a simple channel based interface for the user. 
+The easyraft package exists to abstract the underlying raft algorithm from the application. It brings together the WAL, Transport, Snap and Raft packages and provides a simple channel based interface for the user.
 
 
 ### Usage

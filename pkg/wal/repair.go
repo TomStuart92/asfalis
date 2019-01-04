@@ -90,9 +90,9 @@ func Repair(lg *zap.Logger, dirpath string) bool {
 				return false
 			}
 
-			if err = fileutil.Fsync(f.File); err != nil {
+			if err = f.Sync(); err != nil {
 				if lg != nil {
-					lg.Warn("failed to fsync", zap.String("path", f.Name()), zap.Error(err))
+					lg.Warn("failed to f sync", zap.String("path", f.Name()), zap.Error(err))
 				} else {
 					plog.Errorf("could not repair %v, failed to sync file", f.Name())
 				}

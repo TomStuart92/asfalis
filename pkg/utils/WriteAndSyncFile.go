@@ -3,8 +3,6 @@ package utils
 import (
 	"io"
 	"os"
-
-	"go.etcd.io/etcd/pkg/fileutil"
 )
 
 // WriteAndSyncFile behaves just like ioutil.WriteFile in the standard library,
@@ -20,7 +18,7 @@ func WriteAndSyncFile(filename string, data []byte, perm os.FileMode) error {
 		err = io.ErrShortWrite
 	}
 	if err == nil {
-		err = fileutil.Fsync(f)
+		err = f.Sync()
 	}
 	if err1 := f.Close(); err == nil {
 		err = err1

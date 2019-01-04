@@ -24,7 +24,7 @@ func (s *Snapshotter) SaveDBFrom(r io.Reader, id uint64) (int64, error) {
 	var n int64
 	n, err = io.Copy(f, r)
 	if err == nil {
-		err = utils.Fsync(f)
+		err = f.Sync()
 	}
 	f.Close()
 	if err != nil {
