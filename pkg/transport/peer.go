@@ -9,7 +9,6 @@ import (
 	"github.com/TomStuart92/asfalis/pkg/raft/raftpb"
 	"github.com/TomStuart92/asfalis/pkg/snap"
 	"go.etcd.io/etcd/pkg/types"
-	"go.uber.org/zap"
 	"golang.org/x/time/rate"
 )
 
@@ -78,8 +77,6 @@ type Peer interface {
 // A pipeline is a series of http clients that send http requests to the remote.
 // It is only used when the stream has not been established.
 type peer struct {
-	lg *zap.Logger
-
 	localID types.ID
 	// id of the remote raft peer node
 	id types.ID
@@ -108,20 +105,12 @@ type peer struct {
 }
 
 func startPeer(t *Transport, urls types.URLs, peerID types.ID) *peer {
-	if t.Logger != nil {
-		t.Logger.Info("starting remote peer", zap.String("remote-peer-id", peerID.String()))
-	} else {
-		plog.Infof("starting peer %s...", peerID)
-	}
+	log.Infof("starting peer %s...", peerID)
 	defer func() {
-		if t.Logger != nil {
-			t.Logger.Info("started remote peer", zap.String("remote-peer-id", peerID.String()))
-		} else {
-			plog.Infof("started peer %s", peerID)
-		}
+		log.Infof("started peer %s", peerID)
 	}()
 
-	status := newPeerStatus(t.Logger, t.ID, peerID)
+	status := newPeerStatus(t.ID, peerID)
 	picker := newURLPicker(urls)
 	errorc := t.ErrorC
 	r := t.Raft
@@ -136,14 +125,13 @@ func startPeer(t *Transport, urls types.URLs, peerID types.ID) *peer {
 	pipeline.start()
 
 	p := &peer{
-		lg:             t.Logger,
 		localID:        t.ID,
 		id:             peerID,
 		r:              r,
 		status:         status,
 		picker:         picker,
-		msgAppV2Writer: startStreamWriter(t.Logger, t.ID, peerID, status, r),
-		writer:         startStreamWriter(t.Logger, t.ID, peerID, status, r),
+		msgAppV2Writer: startStreamWriter(t.ID, peerID, status, r),
+		writer:         startStreamWriter(t.ID, peerID, status, r),
 		pipeline:       pipeline,
 		snapSender:     newSnapshotSender(t, picker, peerID, status),
 		recvc:          make(chan raftpb.Message, recvBufSize),
@@ -158,11 +146,7 @@ func startPeer(t *Transport, urls types.URLs, peerID types.ID) *peer {
 			select {
 			case mm := <-p.recvc:
 				if err := r.Process(ctx, mm); err != nil {
-					if t.Logger != nil {
-						t.Logger.Warn("failed to process Raft message", zap.Error(err))
-					} else {
-						plog.Warningf("failed to process raft message (%v)", err)
-					}
+					log.Warningf("failed to process raft message (%v)", err)
 				}
 			case <-p.stopc:
 				return
@@ -178,7 +162,7 @@ func startPeer(t *Transport, urls types.URLs, peerID types.ID) *peer {
 			select {
 			case mm := <-p.propc:
 				if err := r.Process(ctx, mm); err != nil {
-					plog.Warningf("failed to process raft message (%v)", err)
+					log.Warningf("failed to process raft message (%v)", err)
 				}
 			case <-p.stopc:
 				return
@@ -187,7 +171,6 @@ func startPeer(t *Transport, urls types.URLs, peerID types.ID) *peer {
 	}()
 
 	p.msgAppV2Reader = &streamReader{
-		lg:     t.Logger,
 		peerID: peerID,
 		typ:    streamTypeMsgAppV2,
 		tr:     t,
@@ -198,7 +181,6 @@ func startPeer(t *Transport, urls types.URLs, peerID types.ID) *peer {
 		rl:     rate.NewLimiter(t.DialRetryFrequency, 1),
 	}
 	p.msgAppReader = &streamReader{
-		lg:     t.Logger,
 		peerID: peerID,
 		typ:    streamTypeMessage,
 		tr:     t,
@@ -233,31 +215,9 @@ func (p *peer) send(m raftpb.Message) {
 			p.r.ReportSnapshot(m.To, raft.SnapshotFailure)
 		}
 		if p.status.isActive() {
-			if p.lg != nil {
-				p.lg.Warn(
-					"dropped internal Raft message since sending buffer is full (overloaded network)",
-					zap.String("message-type", m.Type.String()),
-					zap.String("local-member-id", p.localID.String()),
-					zap.String("from", types.ID(m.From).String()),
-					zap.String("remote-peer-id", p.id.String()),
-					zap.Bool("remote-peer-active", p.status.isActive()),
-				)
-			} else {
-				plog.MergeWarningf("dropped internal raft message to %s since %s's sending buffer is full (bad/overloaded network)", p.id, name)
-			}
+			log.Warningf("dropped internal raft message to %s since %s's sending buffer is full (bad/overloaded network)", p.id, name)
 		} else {
-			if p.lg != nil {
-				p.lg.Warn(
-					"dropped internal Raft message since sending buffer is full (overloaded network)",
-					zap.String("message-type", m.Type.String()),
-					zap.String("local-member-id", p.localID.String()),
-					zap.String("from", types.ID(m.From).String()),
-					zap.String("remote-peer-id", p.id.String()),
-					zap.Bool("remote-peer-active", p.status.isActive()),
-				)
-			} else {
-				plog.Debugf("dropped %s to %s since %s's sending buffer is full", m.Type, p.id, name)
-			}
+			log.Debugf("dropped %s to %s since %s's sending buffer is full", m.Type, p.id, name)
 		}
 	}
 }
@@ -278,11 +238,7 @@ func (p *peer) attachOutgoingConn(conn *outgoingConn) {
 	case streamTypeMessage:
 		ok = p.writer.attach(conn)
 	default:
-		if p.lg != nil {
-			p.lg.Panic("unknown stream type", zap.String("type", conn.t.String()))
-		} else {
-			plog.Panicf("unhandled stream type %s", conn.t)
-		}
+		log.Warningf("unhandled stream type %s", conn.t)
 	}
 	if !ok {
 		conn.Close()
@@ -311,18 +267,10 @@ func (p *peer) Resume() {
 }
 
 func (p *peer) stop() {
-	if p.lg != nil {
-		p.lg.Info("stopping remote peer", zap.String("remote-peer-id", p.id.String()))
-	} else {
-		plog.Infof("stopping peer %s...", p.id)
-	}
+	log.Infof("stopping peer %s...", p.id)
 
 	defer func() {
-		if p.lg != nil {
-			p.lg.Info("stopped remote peer", zap.String("remote-peer-id", p.id.String()))
-		} else {
-			plog.Infof("stopped peer %s", p.id)
-		}
+		log.Infof("stopped peer %s", p.id)
 	}()
 
 	close(p.stopc)

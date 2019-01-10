@@ -1,13 +1,11 @@
 package transport
 
 import (
-	"errors"
 	"fmt"
 	"sync"
 	"time"
 
 	"go.etcd.io/etcd/pkg/types"
-	"go.uber.org/zap"
 )
 
 type failureType struct {
@@ -16,7 +14,6 @@ type failureType struct {
 }
 
 type peerStatus struct {
-	lg     *zap.Logger
 	local  types.ID
 	id     types.ID
 	mu     sync.Mutex // protect variables below
@@ -24,19 +21,15 @@ type peerStatus struct {
 	since  time.Time
 }
 
-func newPeerStatus(lg *zap.Logger, local, id types.ID) *peerStatus {
-	return &peerStatus{lg: lg, local: local, id: id}
+func newPeerStatus(local, id types.ID) *peerStatus {
+	return &peerStatus{local: local, id: id}
 }
 
 func (s *peerStatus) activate() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if !s.active {
-		if s.lg != nil {
-			s.lg.Info("peer became active", zap.String("peer-id", s.id.String()))
-		} else {
-			plog.Infof("peer %s became active", s.id)
-		}
+		log.Infof("peer %s became active", s.id)
 		s.active = true
 		s.since = time.Now()
 	}
@@ -47,20 +40,13 @@ func (s *peerStatus) deactivate(failure failureType, reason string) {
 	defer s.mu.Unlock()
 	msg := fmt.Sprintf("failed to %s %s on %s (%s)", failure.action, s.id, failure.source, reason)
 	if s.active {
-		if s.lg != nil {
-			s.lg.Warn("peer became inactive (message send to peer failed)", zap.String("peer-id", s.id.String()), zap.Error(errors.New(msg)))
-		} else {
-			plog.Errorf(msg)
-			plog.Infof("peer %s became inactive (message send to peer failed)", s.id)
-		}
+		log.Errorf(msg)
+		log.Infof("peer %s became inactive (message send to peer failed)", s.id)
 		s.active = false
 		s.since = time.Time{}
 		return
 	}
-
-	if s.lg != nil {
-		s.lg.Debug("peer deactivated again", zap.String("peer-id", s.id.String()), zap.Error(errors.New(msg)))
-	}
+	log.Debug("peer deactivated again")
 }
 
 func (s *peerStatus) isActive() bool {

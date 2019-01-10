@@ -3,12 +3,12 @@ package easyraft
 import (
 	"context"
 	"fmt"
-	"log"
 	"net/http"
 	"net/url"
 	"os"
 	"time"
 
+	"github.com/TomStuart92/asfalis/pkg/logger"
 	"github.com/TomStuart92/asfalis/pkg/raft"
 	"github.com/TomStuart92/asfalis/pkg/raft/raftpb"
 	"github.com/TomStuart92/asfalis/pkg/snap"
@@ -17,8 +17,9 @@ import (
 	"github.com/TomStuart92/asfalis/pkg/wal/walpb"
 	"go.etcd.io/etcd/pkg/fileutil"
 	"go.etcd.io/etcd/pkg/types"
-	"go.uber.org/zap"
 )
+
+var log *logger.Logger = logger.NewStdoutLogger("EASYRAFT: ")
 
 // A key-value stream backed by raft
 type easyRaft struct {
@@ -189,7 +190,7 @@ func (rc *easyRaft) openWAL(snapshot *raftpb.Snapshot) *wal.WAL {
 			log.Fatalf("raftexample: cannot create dir for wal (%v)", err)
 		}
 
-		w, err := wal.Create(zap.NewExample(), rc.waldir, nil)
+		w, err := wal.Create(rc.waldir, nil)
 		if err != nil {
 			log.Fatalf("raftexample: create wal error (%v)", err)
 		}
@@ -201,7 +202,7 @@ func (rc *easyRaft) openWAL(snapshot *raftpb.Snapshot) *wal.WAL {
 		walsnap.Index, walsnap.Term = snapshot.Metadata.Index, snapshot.Metadata.Term
 	}
 	log.Printf("loading WAL at term %d and index %d", walsnap.Term, walsnap.Index)
-	w, err := wal.Open(zap.NewExample(), rc.waldir, walsnap)
+	w, err := wal.Open(rc.waldir, walsnap)
 	if err != nil {
 		log.Fatalf("raftexample: error loading wal (%v)", err)
 	}
@@ -283,7 +284,6 @@ func (rc *easyRaft) startRaft() {
 	}
 
 	rc.transport = &transport.Transport{
-		Logger:    zap.NewExample(),
 		ID:        types.ID(rc.id),
 		ClusterID: 0x1000,
 		Raft:      rc,

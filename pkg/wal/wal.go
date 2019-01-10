@@ -11,14 +11,14 @@ import (
 	"sync"
 	"time"
 
+	"github.com/TomStuart92/asfalis/pkg/logger"
 	"github.com/TomStuart92/asfalis/pkg/raft"
 	"github.com/TomStuart92/asfalis/pkg/raft/raftpb"
 	"github.com/TomStuart92/asfalis/pkg/utils"
 	"github.com/TomStuart92/asfalis/pkg/wal/walpb"
-	"github.com/coreos/pkg/capnslog"
-	"go.etcd.io/etcd/pkg/fileutil"
-	"go.uber.org/zap"
 )
+
+var log *logger.Logger = logger.NewStdoutLogger("WAL: ")
 
 const (
 	metadataType int64 = iota + 1
@@ -39,8 +39,6 @@ var (
 	// so that tests can set a different segment size.
 	SegmentSizeBytes int64 = 64 * 1000 * 1000 // 64MB
 
-	plog = capnslog.NewPackageLogger("go.etcd.io/etcd", "wal")
-
 	ErrMetadataConflict = errors.New("wal: conflicting metadata found")
 	ErrFileNotFound     = errors.New("wal: file not found")
 	ErrCRCMismatch      = errors.New("wal: crc mismatch")
@@ -55,8 +53,6 @@ var (
 // A just opened WAL is in read mode, and ready for reading records.
 // The WAL will be ready for appending after reading out all the previous records.
 type WAL struct {
-	lg *zap.Logger
-
 	dir string // the living directory of the underlay files
 
 	// dirFile is a fd for the wal directory for syncing on Rename
@@ -73,72 +69,45 @@ type WAL struct {
 	enti    uint64   // index of the last entry saved to the wal
 	encoder *encoder // encoder to encode records
 
-	locks []*fileutil.LockedFile // the locked files the WAL holds (the name is increasing)
+	locks []*utils.LockedFile // the locked files the WAL holds (the name is increasing)
 	fp    *filePipeline
 }
 
 // Create creates a WAL ready for appending records. The given metadata is
 // recorded at the head of each WAL file, and can be retrieved with ReadAll.
-func Create(lg *zap.Logger, dirpath string, metadata []byte) (*WAL, error) {
+func Create(dirpath string, metadata []byte) (*WAL, error) {
 	if Exist(dirpath) {
 		return nil, os.ErrExist
 	}
 
 	// keep temporary wal directory so WAL initialization appears atomic
 	tmpdirpath := filepath.Clean(dirpath) + ".tmp"
-	if fileutil.Exist(tmpdirpath) {
+	if utils.Exist(tmpdirpath) {
 		if err := os.RemoveAll(tmpdirpath); err != nil {
 			return nil, err
 		}
 	}
-	if err := fileutil.CreateDirAll(tmpdirpath); err != nil {
-		if lg != nil {
-			lg.Warn(
-				"failed to create a temporary WAL directory",
-				zap.String("tmp-dir-path", tmpdirpath),
-				zap.String("dir-path", dirpath),
-				zap.Error(err),
-			)
-		}
+	if err := utils.CreateDirAll(tmpdirpath); err != nil {
+		log.Error("failed to create a temporary WAL directory")
 		return nil, err
 	}
 
 	p := filepath.Join(tmpdirpath, walName(0, 0))
-	f, err := fileutil.LockFile(p, os.O_WRONLY|os.O_CREATE, fileutil.PrivateFileMode)
+	f, err := utils.LockFile(p, os.O_WRONLY|os.O_CREATE, utils.PrivateFileMode)
 	if err != nil {
-		if lg != nil {
-			lg.Warn(
-				"failed to flock an initial WAL file",
-				zap.String("path", p),
-				zap.Error(err),
-			)
-		}
+		log.Error("failed to flock an initial WAL file")
 		return nil, err
 	}
 	if _, err = f.Seek(0, io.SeekEnd); err != nil {
-		if lg != nil {
-			lg.Warn(
-				"failed to seek an initial WAL file",
-				zap.String("path", p),
-				zap.Error(err),
-			)
-		}
+		log.Error("failed to seek an initial WAL file")
 		return nil, err
 	}
-	if err = fileutil.Preallocate(f.File, SegmentSizeBytes, true); err != nil {
-		if lg != nil {
-			lg.Warn(
-				"failed to preallocate an initial WAL file",
-				zap.String("path", p),
-				zap.Int64("segment-bytes", SegmentSizeBytes),
-				zap.Error(err),
-			)
-		}
+	if err = utils.Preallocate(f.File, SegmentSizeBytes, true); err != nil {
+		log.Error("failed to preallocate an initial WAL file")
 		return nil, err
 	}
 
 	w := &WAL{
-		lg:       lg,
 		dir:      dirpath,
 		metadata: metadata,
 	}
@@ -158,53 +127,24 @@ func Create(lg *zap.Logger, dirpath string, metadata []byte) (*WAL, error) {
 	}
 
 	if w, err = w.renameWAL(tmpdirpath); err != nil {
-		if lg != nil {
-			lg.Warn(
-				"failed to rename the temporary WAL directory",
-				zap.String("tmp-dir-path", tmpdirpath),
-				zap.String("dir-path", w.dir),
-				zap.Error(err),
-			)
-		}
+		log.Error("failed to rename the temporary WAL directory")
 		return nil, err
 	}
 
 	// directory was renamed; sync parent dir to persist rename
-	pdir, perr := fileutil.OpenDir(filepath.Dir(w.dir))
+	pdir, perr := utils.OpenDir(filepath.Dir(w.dir))
 	if perr != nil {
-		if lg != nil {
-			lg.Warn(
-				"failed to open the parent data directory",
-				zap.String("parent-dir-path", filepath.Dir(w.dir)),
-				zap.String("dir-path", w.dir),
-				zap.Error(perr),
-			)
-		}
+		log.Error("failed to open the parent data directory")
 		return nil, perr
 	}
 	if perr = pdir.Sync(); perr != nil {
-		if lg != nil {
-			lg.Warn(
-				"failed to fsync the parent data directory file",
-				zap.String("parent-dir-path", filepath.Dir(w.dir)),
-				zap.String("dir-path", w.dir),
-				zap.Error(perr),
-			)
-		}
+		log.Error("failed to fsync the parent data directory file")
 		return nil, perr
 	}
 	if perr = pdir.Close(); err != nil {
-		if lg != nil {
-			lg.Warn(
-				"failed to close the parent data directory file",
-				zap.String("parent-dir-path", filepath.Dir(w.dir)),
-				zap.String("dir-path", w.dir),
-				zap.Error(perr),
-			)
-		}
+		log.Error("failed to close the parent data directory file")
 		return nil, perr
 	}
-
 	return w, nil
 }
 
@@ -224,8 +164,8 @@ func (w *WAL) renameWAL(tmpdirpath string) (*WAL, error) {
 		}
 		return nil, err
 	}
-	w.fp = newFilePipeline(w.lg, w.dir, SegmentSizeBytes)
-	df, err := fileutil.OpenDir(w.dir)
+	w.fp = newFilePipeline(w.dir, SegmentSizeBytes)
+	df, err := utils.OpenDir(w.dir)
 	w.dirFile = df
 	return w, err
 }
@@ -233,15 +173,7 @@ func (w *WAL) renameWAL(tmpdirpath string) (*WAL, error) {
 func (w *WAL) renameWALUnlock(tmpdirpath string) (*WAL, error) {
 	// rename of directory with locked files doesn't work on windows/cifs;
 	// close the WAL to release the locks so the directory can be renamed.
-	if w.lg != nil {
-		w.lg.Info(
-			"closing WAL to release flock and retry directory renaming",
-			zap.String("from", tmpdirpath),
-			zap.String("to", w.dir),
-		)
-	} else {
-		plog.Infof("releasing file lock to rename %q to %q", tmpdirpath, w.dir)
-	}
+	log.Info("closing WAL to release flock and retry directory renaming")
 	w.Close()
 
 	if err := os.Rename(tmpdirpath, w.dir); err != nil {
@@ -249,7 +181,7 @@ func (w *WAL) renameWALUnlock(tmpdirpath string) (*WAL, error) {
 	}
 
 	// reopen and relock
-	newWAL, oerr := Open(w.lg, w.dir, walpb.Snapshot{})
+	newWAL, oerr := Open(w.dir, walpb.Snapshot{})
 	if oerr != nil {
 		return nil, oerr
 	}
@@ -266,12 +198,12 @@ func (w *WAL) renameWALUnlock(tmpdirpath string) (*WAL, error) {
 // The returned WAL is ready to read and the first record will be the one after
 // the given snap. The WAL cannot be appended to before reading out all of its
 // previous records.
-func Open(lg *zap.Logger, dirpath string, snap walpb.Snapshot) (*WAL, error) {
-	w, err := openAtIndex(lg, dirpath, snap, true)
+func Open(dirpath string, snap walpb.Snapshot) (*WAL, error) {
+	w, err := openAtIndex(dirpath, snap, true)
 	if err != nil {
 		return nil, err
 	}
-	if w.dirFile, err = fileutil.OpenDir(w.dir); err != nil {
+	if w.dirFile, err = utils.OpenDir(w.dir); err != nil {
 		return nil, err
 	}
 	return w, nil
@@ -279,29 +211,29 @@ func Open(lg *zap.Logger, dirpath string, snap walpb.Snapshot) (*WAL, error) {
 
 // OpenForRead only opens the wal files for read.
 // Write on a read only wal panics.
-func OpenForRead(lg *zap.Logger, dirpath string, snap walpb.Snapshot) (*WAL, error) {
-	return openAtIndex(lg, dirpath, snap, false)
+func OpenForRead(dirpath string, snap walpb.Snapshot) (*WAL, error) {
+	return openAtIndex(dirpath, snap, false)
 }
 
-func openAtIndex(lg *zap.Logger, dirpath string, snap walpb.Snapshot, write bool) (*WAL, error) {
-	names, err := readWALNames(lg, dirpath)
+func openAtIndex(dirpath string, snap walpb.Snapshot, write bool) (*WAL, error) {
+	names, err := readWALNames(dirpath)
 	if err != nil {
 		return nil, err
 	}
 
-	nameIndex, ok := searchIndex(lg, names, snap.Index)
-	if !ok || !isValidSeq(lg, names[nameIndex:]) {
+	nameIndex, ok := searchIndex(names, snap.Index)
+	if !ok || !isValidSeq(names[nameIndex:]) {
 		return nil, ErrFileNotFound
 	}
 
 	// open the wal files
 	rcs := make([]io.ReadCloser, 0)
 	rs := make([]io.Reader, 0)
-	ls := make([]*fileutil.LockedFile, 0)
+	ls := make([]*utils.LockedFile, 0)
 	for _, name := range names[nameIndex:] {
 		p := filepath.Join(dirpath, name)
 		if write {
-			l, err := fileutil.TryLockFile(p, os.O_RDWR, fileutil.PrivateFileMode)
+			l, err := utils.TryLockFile(p, os.O_RDWR, utils.PrivateFileMode)
 			if err != nil {
 				closeAll(rcs...)
 				return nil, err
@@ -309,7 +241,7 @@ func openAtIndex(lg *zap.Logger, dirpath string, snap walpb.Snapshot, write bool
 			ls = append(ls, l)
 			rcs = append(rcs, l)
 		} else {
-			rf, err := os.OpenFile(p, os.O_RDONLY, fileutil.PrivateFileMode)
+			rf, err := os.OpenFile(p, os.O_RDONLY, utils.PrivateFileMode)
 			if err != nil {
 				closeAll(rcs...)
 				return nil, err
@@ -324,7 +256,6 @@ func openAtIndex(lg *zap.Logger, dirpath string, snap walpb.Snapshot, write bool
 
 	// create a WAL ready for reading
 	w := &WAL{
-		lg:        lg,
 		dir:       dirpath,
 		start:     snap,
 		decoder:   newDecoder(rs...),
@@ -340,7 +271,7 @@ func openAtIndex(lg *zap.Logger, dirpath string, snap walpb.Snapshot, write bool
 			closer()
 			return nil, err
 		}
-		w.fp = newFilePipeline(w.lg, w.dir, SegmentSizeBytes)
+		w.fp = newFilePipeline(w.dir, SegmentSizeBytes)
 	}
 
 	return w, nil
@@ -434,7 +365,7 @@ func (w *WAL) ReadAll() (metadata []byte, state raftpb.HardState, ents []raftpb.
 		if _, err = w.tail().Seek(w.decoder.lastOffset(), io.SeekStart); err != nil {
 			return nil, state, nil, err
 		}
-		if err = fileutil.ZeroToEnd(w.tail().File); err != nil {
+		if err = utils.ZeroToEnd(w.tail().File); err != nil {
 			return nil, state, nil, err
 		}
 	}
@@ -531,7 +462,7 @@ func (w *WAL) cut() error {
 	// reopen newTail with its new path so calls to Name() match the wal filename format
 	newTail.Close()
 
-	if newTail, err = fileutil.LockFile(fpath, os.O_WRONLY, fileutil.PrivateFileMode); err != nil {
+	if newTail, err = utils.LockFile(fpath, os.O_WRONLY, utils.PrivateFileMode); err != nil {
 		return err
 	}
 	if _, err = newTail.Seek(off, io.SeekStart); err != nil {
@@ -546,11 +477,7 @@ func (w *WAL) cut() error {
 		return err
 	}
 
-	if w.lg != nil {
-		w.lg.Info("created a new WAL segment", zap.String("path", fpath))
-	} else {
-		plog.Infof("segmented wal file %v is created", fpath)
-	}
+	log.Info("created a new WAL segment")
 	return nil
 }
 
@@ -565,15 +492,7 @@ func (w *WAL) sync() error {
 
 	took := time.Since(start)
 	if took > warnSyncDuration {
-		if w.lg != nil {
-			w.lg.Warn(
-				"slow fdatasync",
-				zap.Duration("took", took),
-				zap.Duration("expected-duration", warnSyncDuration),
-			)
-		} else {
-			plog.Warningf("sync duration of %v, expected less than %v", took, warnSyncDuration)
-		}
+		log.Info("slow fdatasync")
 	}
 	return err
 }
@@ -645,11 +564,7 @@ func (w *WAL) Close() error {
 			continue
 		}
 		if err := l.Close(); err != nil {
-			if w.lg != nil {
-				w.lg.Warn("failed to close WAL", zap.Error(err))
-			} else {
-				plog.Errorf("failed to unlock during closing wal: %s", err)
-			}
+			log.Error("failed to close WAL")
 		}
 	}
 
@@ -732,7 +647,7 @@ func (w *WAL) saveCrc(prevCrc uint32) error {
 	return w.encoder.encode(&walpb.Record{Type: crcType, Crc: prevCrc})
 }
 
-func (w *WAL) tail() *fileutil.LockedFile {
+func (w *WAL) tail() *utils.LockedFile {
 	if len(w.locks) > 0 {
 		return w.locks[len(w.locks)-1]
 	}
@@ -746,11 +661,7 @@ func (w *WAL) seq() uint64 {
 	}
 	seq, _, err := parseWALName(filepath.Base(t.Name()))
 	if err != nil {
-		if w.lg != nil {
-			w.lg.Fatal("failed to parse WAL name", zap.String("name", t.Name()), zap.Error(err))
-		} else {
-			plog.Fatalf("bad wal name %s (%v)", t.Name(), err)
-		}
+		log.Error("failed to parse WAL name")
 	}
 	return seq
 }

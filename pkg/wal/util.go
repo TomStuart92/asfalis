@@ -7,8 +7,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-
-	"go.uber.org/zap"
 )
 
 var errBadWALName = errors.New("bad wal name")
@@ -25,16 +23,12 @@ func Exist(dir string) bool {
 // searchIndex returns the last array index of names whose raft index section is
 // equal to or smaller than the given index.
 // The given names MUST be sorted.
-func searchIndex(lg *zap.Logger, names []string, index uint64) (int, bool) {
+func searchIndex(names []string, index uint64) (int, bool) {
 	for i := len(names) - 1; i >= 0; i-- {
 		name := names[i]
 		_, curIndex, err := parseWALName(name)
 		if err != nil {
-			if lg != nil {
-				lg.Panic("failed to parse WAL file name", zap.String("path", name), zap.Error(err))
-			} else {
-				plog.Panicf("parse correct name should never fail: %v", err)
-			}
+			log.Errorf("parse correct name should never fail: %v", err)
 		}
 		if index >= curIndex {
 			return i, true
@@ -45,16 +39,12 @@ func searchIndex(lg *zap.Logger, names []string, index uint64) (int, bool) {
 
 // names should have been sorted based on sequence number.
 // isValidSeq checks whether seq increases continuously.
-func isValidSeq(lg *zap.Logger, names []string) bool {
+func isValidSeq(names []string) bool {
 	var lastSeq uint64
 	for _, name := range names {
 		curSeq, _, err := parseWALName(name)
 		if err != nil {
-			if lg != nil {
-				lg.Panic("failed to parse WAL file name", zap.String("path", name), zap.Error(err))
-			} else {
-				plog.Panicf("parse correct name should never fail: %v", err)
-			}
+			log.Errorf("parse correct name should never fail: %v", err)
 		}
 		if lastSeq != 0 && lastSeq != curSeq-1 {
 			return false
@@ -64,32 +54,24 @@ func isValidSeq(lg *zap.Logger, names []string) bool {
 	return true
 }
 
-func readWALNames(lg *zap.Logger, dirpath string) ([]string, error) {
+func readWALNames(dirpath string) ([]string, error) {
 	names, err := ReadDir(dirpath)
 	if err != nil {
 		return nil, err
 	}
-	wnames := checkWalNames(lg, names)
+	wnames := checkWalNames(names)
 	if len(wnames) == 0 {
 		return nil, ErrFileNotFound
 	}
 	return wnames, nil
 }
 
-func checkWalNames(lg *zap.Logger, names []string) []string {
+func checkWalNames(names []string) []string {
 	wnames := make([]string, 0)
 	for _, name := range names {
 		if _, _, err := parseWALName(name); err != nil {
-			// don't complain about left over tmp files
 			if !strings.HasSuffix(name, ".tmp") {
-				if lg != nil {
-					lg.Warn(
-						"ignored file in WAL directory",
-						zap.String("path", name),
-					)
-				} else {
-					plog.Warningf("ignored file %v in wal", name)
-				}
+				log.Infof("ignored file %v in wal", name)
 			}
 			continue
 		}

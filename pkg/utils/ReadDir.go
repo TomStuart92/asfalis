@@ -15,7 +15,6 @@ type ReadDirOp struct {
 type ReadDirOption func(*ReadDirOp)
 
 // WithExt filters file names by their extensions.
-// (e.g. WithExt(".wal") to list only WAL files)
 func WithExt(ext string) ReadDirOption {
 	return func(op *ReadDirOp) { op.ext = ext }
 }

@@ -6,19 +6,17 @@ import (
 	"sync"
 	"time"
 
+	"github.com/TomStuart92/asfalis/pkg/logger"
 	"github.com/TomStuart92/asfalis/pkg/raft"
 	"github.com/TomStuart92/asfalis/pkg/raft/raftpb"
 	"github.com/TomStuart92/asfalis/pkg/snap"
-	"github.com/coreos/pkg/capnslog"
 	"github.com/xiang90/probing"
-	"go.etcd.io/etcd/pkg/logutil"
 	"go.etcd.io/etcd/pkg/transport"
 	"go.etcd.io/etcd/pkg/types"
-	"go.uber.org/zap"
 	"golang.org/x/time/rate"
 )
 
-var plog = logutil.NewMergeLogger(capnslog.NewPackageLogger("go.etcd.io/etcd", "rafthttp"))
+var log *logger.Logger = logger.NewStdoutLogger("TRANSPORT: ")
 
 type Raft interface {
 	Process(ctx context.Context, m raftpb.Message) error
@@ -83,8 +81,6 @@ type Transporter interface {
 // User needs to call Start before calling other functions, and call
 // Stop when the Transport is no longer used.
 type Transport struct {
-	Logger *zap.Logger
-
 	DialTimeout time.Duration // maximum duration before timing out dial of the request
 	// DialRetryFrequency defines the frequency of streamReader dial retrial attempts;
 	// a distinct rate limiter is created per every peer (default value: 10 events/sec)
@@ -180,15 +176,7 @@ func (t *Transport) Send(msgs []raftpb.Message) {
 			continue
 		}
 
-		if t.Logger != nil {
-			t.Logger.Debug(
-				"ignored message send request; unknown remote peer target",
-				zap.String("type", m.Type.String()),
-				zap.String("unknown-target-peer-id", to.String()),
-			)
-		} else {
-			plog.Debugf("ignored message %s (sent to unknown peer %s)", m.Type, to)
-		}
+		log.Debugf("ignored message %s (sent to unknown peer %s)", m.Type, to)
 	}
 }
 
@@ -260,22 +248,9 @@ func (t *Transport) AddRemote(id types.ID, us []string) {
 	}
 	urls, err := types.NewURLs(us)
 	if err != nil {
-		if t.Logger != nil {
-			t.Logger.Panic("failed NewURLs", zap.Strings("urls", us), zap.Error(err))
-		} else {
-			plog.Panicf("newURLs %+v should never fail: %+v", us, err)
-		}
+		log.Warningf("newURLs %+v should never fail: %+v", us, err)
 	}
 	t.remotes[id] = startRemote(t, urls, id)
-
-	if t.Logger != nil {
-		t.Logger.Info(
-			"added new remote peer",
-			zap.String("local-member-id", t.ID.String()),
-			zap.String("remote-peer-id", id.String()),
-			zap.Strings("remote-peer-urls", us),
-		)
-	}
 }
 
 func (t *Transport) AddPeer(id types.ID, us []string) {
@@ -290,24 +265,10 @@ func (t *Transport) AddPeer(id types.ID, us []string) {
 	}
 	urls, err := types.NewURLs(us)
 	if err != nil {
-		if t.Logger != nil {
-			t.Logger.Panic("failed NewURLs", zap.Strings("urls", us), zap.Error(err))
-		} else {
-			plog.Panicf("newURLs %+v should never fail: %+v", us, err)
-		}
+		log.Panicf("newURLs %+v should never fail: %+v", us, err)
 	}
 	t.peers[id] = startPeer(t, urls, id)
-
-	if t.Logger != nil {
-		t.Logger.Info(
-			"added remote peer",
-			zap.String("local-member-id", t.ID.String()),
-			zap.String("remote-peer-id", id.String()),
-			zap.Strings("remote-peer-urls", us),
-		)
-	} else {
-		plog.Infof("added peer %s", id)
-	}
+	log.Infof("added peer %s", id)
 }
 
 func (t *Transport) RemovePeer(id types.ID) {
@@ -329,25 +290,12 @@ func (t *Transport) removePeer(id types.ID) {
 	if peer, ok := t.peers[id]; ok {
 		peer.stop()
 	} else {
-		if t.Logger != nil {
-			t.Logger.Panic("unexpected removal of unknown remote peer", zap.String("remote-peer-id", id.String()))
-		} else {
-			plog.Panicf("unexpected removal of unknown peer '%d'", id)
-		}
+		log.Panicf("unexpected removal of unknown peer '%d'", id)
 	}
 	delete(t.peers, id)
 	t.pipelineProber.Remove(id.String())
 	t.streamProber.Remove(id.String())
-
-	if t.Logger != nil {
-		t.Logger.Info(
-			"removed remote peer",
-			zap.String("local-member-id", t.ID.String()),
-			zap.String("removed-remote-peer-id", id.String()),
-		)
-	} else {
-		plog.Infof("removed peer %s", id)
-	}
+	log.Infof("removed peer %s", id)
 }
 
 func (t *Transport) UpdatePeer(id types.ID, us []string) {
@@ -359,29 +307,15 @@ func (t *Transport) UpdatePeer(id types.ID, us []string) {
 	}
 	urls, err := types.NewURLs(us)
 	if err != nil {
-		if t.Logger != nil {
-			t.Logger.Panic("failed NewURLs", zap.Strings("urls", us), zap.Error(err))
-		} else {
-			plog.Panicf("newURLs %+v should never fail: %+v", us, err)
-		}
+		log.Warningf("newURLs %+v should never fail: %+v", us, err)
 	}
 	t.peers[id].update(urls)
 
 	t.pipelineProber.Remove(id.String())
-	addPeerToProber(t.Logger, t.pipelineProber, id.String(), us, RoundTripperNameSnapshot)
+	addPeerToProber(t.pipelineProber, id.String(), us, RoundTripperNameSnapshot)
 	t.streamProber.Remove(id.String())
-	addPeerToProber(t.Logger, t.streamProber, id.String(), us, RoundTripperNameRaftMessage)
-
-	if t.Logger != nil {
-		t.Logger.Info(
-			"updated remote peer",
-			zap.String("local-member-id", t.ID.String()),
-			zap.String("updated-remote-peer-id", id.String()),
-			zap.Strings("updated-remote-peer-urls", us),
-		)
-	} else {
-		plog.Infof("updated peer %s", id)
-	}
+	addPeerToProber(t.streamProber, id.String(), us, RoundTripperNameRaftMessage)
+	log.Infof("updated peer %s", id)
 }
 
 func (t *Transport) ActiveSince(id types.ID) time.Time {
