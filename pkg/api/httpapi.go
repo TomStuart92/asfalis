@@ -10,6 +10,7 @@ import (
 )
 
 var log *logger.Logger = logger.NewStdoutLogger("HTTP-API: ")
+var srv http.Server
 
 type httpAPI struct {
 	store       *store.DistributedStore
@@ -49,21 +50,16 @@ func (h *httpAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 // ServeHTTP starts HTTP server
-func ServeHTTP(kv *store.DistributedStore, port int, errorC <-chan error) {
-	srv := http.Server{
+func Serve(kv *store.DistributedStore, port int) {
+	srv = http.Server{
 		Addr: ":" + strconv.Itoa(port),
 		Handler: &httpAPI{
 			store:       kv,
 		},
 	}
-	go func() {
-		if err := srv.ListenAndServe(); err != nil {
-			log.Fatal(err)
-		}
-	}()
-
-	// exit when raft goes down
-	if _, ok := <-errorC; ok {
-		srv.Close()
+	
+	log.Info("Starting server")
+	if err := srv.ListenAndServe(); err != nil {
+		log.Fatal(err)
 	}
 }

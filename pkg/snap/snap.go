@@ -30,6 +30,12 @@ var (
 	}
 )
 
+// Snapper is an interface to load raft snapshots
+type Snapper interface {
+	Load() (*raftpb.Snapshot, error)
+}
+
+
 // Snapshotter is responsible for persisting the current state of data to drive.
 type Snapshotter struct {
 	dir string

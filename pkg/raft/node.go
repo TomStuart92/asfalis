@@ -289,6 +289,7 @@ func (n *node) run(r *raft) {
 	prevHardSt := emptyState
 
 	for {
+		homelog.Info("Start of run loop")
 		if advancec != nil {
 			readyc = nil
 		} else {
@@ -303,13 +304,13 @@ func (n *node) run(r *raft) {
 		if lead != r.lead {
 			if r.hasLeader() {
 				if lead == None {
-					r.logger.Infof("raft.node: %x elected leader %x at term %d", r.id, r.lead, r.Term)
+					homelog.Infof("raft.node: %x elected leader %x at term %d", r.id, r.lead, r.Term)
 				} else {
-					r.logger.Infof("raft.node: %x changed leader from %x to %x at term %d", r.id, lead, r.lead, r.Term)
+					homelog.Infof("raft.node: %x changed leader from %x to %x at term %d", r.id, lead, r.lead, r.Term)
 				}
 				propc = n.propc
 			} else {
-				r.logger.Infof("raft.node: %x lost leader %x at term %d", r.id, lead, r.Term)
+				homelog.Infof("raft.node: %x lost leader %x at term %d", r.id, lead, r.Term)
 				propc = nil
 			}
 			lead = r.lead
@@ -320,6 +321,8 @@ func (n *node) run(r *raft) {
 		// described in raft dissertation)
 		// Currently it is dropped in Step silently.
 		case pm := <-propc:
+			homelog.Infof("Processing proposal: %v", pm)
+
 			m := pm.m
 			m.From = r.id
 			err := r.Step(m)
@@ -328,11 +331,13 @@ func (n *node) run(r *raft) {
 				close(pm.result)
 			}
 		case m := <-n.recvc:
+			homelog.Infof("Received message: %v", m)
 			// filter out response message from unknown From.
 			if pr := r.getProgress(m.From); pr != nil || !IsResponseMsg(m.Type) {
 				r.Step(m)
 			}
 		case cc := <-n.confc:
+			homelog.Infof("Received config change: %v", cc)
 			if cc.NodeID == None {
 				select {
 				case n.confstatec <- pb.ConfState{
@@ -365,8 +370,10 @@ func (n *node) run(r *raft) {
 			case <-n.done:
 			}
 		case <-n.tickc:
+			homelog.Info("Node tick")
 			r.tick()
 		case readyc <- rd:
+			homelog.Info("Read from ready channel")
 			if rd.SoftState != nil {
 				prevSoftSt = rd.SoftState
 			}
@@ -390,6 +397,7 @@ func (n *node) run(r *raft) {
 			r.ReduceUncommittedSize(rd.CommittedEntries)
 			advancec = n.advancec
 		case <-advancec:
+			homelog.Info("Read from advance channel")
 			if applyingToI != 0 {
 				r.raftLog.appliedTo(applyingToI)
 				applyingToI = 0
@@ -469,6 +477,8 @@ func (n *node) stepWithWaitOption(ctx context.Context, m pb.Message, wait bool) 
 	if wait {
 		pm.result = make(chan error, 1)
 	}
+
+	homelog.Info("Sending message into proposal channel")
 	select {
 	case ch <- pm:
 		if !wait {
@@ -479,8 +489,12 @@ func (n *node) stepWithWaitOption(ctx context.Context, m pb.Message, wait bool) 
 	case <-n.done:
 		return ErrStopped
 	}
+
+	homelog.Info("Waiting for response to message")
+
 	select {
 	case rsp := <-pm.result:
+		homelog.Infof("Received response to message: %+v", rsp)
 		if rsp != nil {
 			return rsp
 		}

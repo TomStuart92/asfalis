@@ -1,7 +1,6 @@
 package logger
 
 import (
-	"bufio"
 	"io"
 	"log"
 	"os"
@@ -27,7 +26,7 @@ func NewLogger(output io.Writer, prefix string) *Logger {
 func NewStdoutLogger(prefix string) *Logger {
 	logger := Logger{
 		Prefix: prefix,
-		Logger: log.New(bufio.NewWriter(os.Stdout), prefix, 7),
+		Logger: log.New(os.Stdout, prefix, 7),
 	}
 	return &logger
 }
@@ -37,7 +36,7 @@ func (l *Logger) Debug(v ...interface{}) {
 }
 
 func (l *Logger) Debugf(format string, v ...interface{}) {
-	l.Printf(format, v)
+	l.Printf(format, v...)
 }
 
 func (l *Logger) Info(v ...interface{}) {
@@ -45,7 +44,7 @@ func (l *Logger) Info(v ...interface{}) {
 }
 
 func (l *Logger) Infof(format string, v ...interface{}) {
-	l.Printf(format, v)
+	l.Printf(format, v...)
 }
 
 func (l *Logger) Warning(v ...interface{}) {
@@ -53,7 +52,7 @@ func (l *Logger) Warning(v ...interface{}) {
 }
 
 func (l *Logger) Warningf(format string, v ...interface{}) {
-	l.Printf(format, v)
+	l.Printf(format, v...)
 }
 
 func (l *Logger) Error(v ...interface{}) {
@@ -61,5 +60,5 @@ func (l *Logger) Error(v ...interface{}) {
 }
 
 func (l *Logger) Errorf(format string, v ...interface{}) {
-	l.Printf(format, v)
+	l.Printf(format, v...)
 }

@@ -65,11 +65,12 @@ var defaultSnapshotCount uint64 = 10000
 func NewRaftNode(id int, peers []string, join bool, getSnapshot func() ([]byte, error), proposeC <-chan string) (<-chan *string, <-chan error, <-chan *snap.Snapshotter) {
 
 	confChangeC := make(chan raftpb.ConfChange)
-	defer close(confChangeC)
 	commitC := make(chan *string)
 	errorC := make(chan error)
 
-	rc := &easyRaft{
+	log.Info("Setup channels")
+
+	easyraft := &easyRaft{
 		proposeC:    proposeC,
 		confChangeC: confChangeC,
 		commitC:     commitC,
@@ -77,8 +78,8 @@ func NewRaftNode(id int, peers []string, join bool, getSnapshot func() ([]byte, 
 		id:          id,
 		peers:       peers,
 		join:        join,
-		waldir:      fmt.Sprintf("/tmp/raftexample-%d", id),
-		snapdir:     fmt.Sprintf("/tmp/raftexample-%d-snap", id),
+		waldir:      fmt.Sprintf("/tmp/raftexample-%v", time.Now()),
+		snapdir:     fmt.Sprintf("/tmp/raftexample-%v-snap",  time.Now()),
 		getSnapshot: getSnapshot,
 		snapCount:   defaultSnapshotCount,
 		stopc:       make(chan struct{}),
@@ -88,9 +89,69 @@ func NewRaftNode(id int, peers []string, join bool, getSnapshot func() ([]byte, 
 		snapshotterReady: make(chan *snap.Snapshotter, 1),
 		// rest of structure populated after WAL replay
 	}
-	go rc.startRaft()
-	return commitC, errorC, rc.snapshotterReady
+	go easyraft.startRaft()
+	return commitC, errorC, easyraft.snapshotterReady
 }
+
+
+func (easyRaft *easyRaft) startRaft() {
+	if !fileutil.Exist(easyRaft.snapdir) {
+		if err := os.Mkdir(easyRaft.snapdir, 0750); err != nil {
+			log.Fatalf("raftexample: cannot create dir for snapshot (%v)", err)
+		}
+	}
+
+	// create a new snapshotter
+	easyRaft.snapshotter = snap.New(easyRaft.snapdir)
+	easyRaft.snapshotterReady <- easyRaft.snapshotter
+
+	// 
+	oldwal := wal.Exist(easyRaft.waldir)
+	easyRaft.wal = easyRaft.replayWAL()
+	
+	rpeers := make([]raft.Peer, len(easyRaft.peers))
+	for i := range rpeers {
+		rpeers[i] = raft.Peer{ID: uint64(i + 1)}
+	}
+	c := &raft.Config{
+		ID:                        uint64(easyRaft.id),
+		ElectionTick:              10,
+		HeartbeatTick:             1,
+		Storage:                   easyRaft.raftStorage,
+		MaxSizePerMsg:             1024 * 1024,
+		MaxInflightMsgs:           256,
+		MaxUncommittedEntriesSize: 1 << 30,
+	}
+
+	
+	if oldwal {
+		easyRaft.node = raft.RestartNode(c)
+	} else {
+		startPeers := rpeers
+		if easyRaft.join {
+			startPeers = nil
+		}
+		easyRaft.node = raft.StartNode(c, startPeers)
+	}
+
+	easyRaft.transport = &transport.Transport{
+		ID:        types.ID(easyRaft.id),
+		ClusterID: 0x1000,
+		Raft:      easyRaft,
+		ErrorC:    make(chan error),
+	}
+
+	easyRaft.transport.Start()
+	for i := range easyRaft.peers {
+		if i+1 != easyRaft.id {
+			easyRaft.transport.AddPeer(types.ID(i+1), []string{easyRaft.peers[i]})
+		}
+	}
+	go easyRaft.serveRaft()
+	go easyRaft.serveChannels()
+}
+
+
 
 func (rc *easyRaft) saveSnap(snap raftpb.Snapshot) error {
 	// must save the snapshot index to the WAL before saving the
@@ -134,6 +195,7 @@ func (rc *easyRaft) publishEntries(ents []raftpb.Entry) bool {
 				break
 			}
 			s := string(ents[i].Data)
+			log.Infof("Writing data into commit channel %s", s)
 			select {
 			case rc.commitC <- &s:
 			case <-rc.stopc:
@@ -248,63 +310,6 @@ func (rc *easyRaft) writeError(err error) {
 	rc.node.Stop()
 }
 
-func (rc *easyRaft) startRaft() {
-	if !fileutil.Exist(rc.snapdir) {
-		if err := os.Mkdir(rc.snapdir, 0750); err != nil {
-			log.Fatalf("raftexample: cannot create dir for snapshot (%v)", err)
-		}
-	}
-	rc.snapshotter = snap.New(rc.snapdir)
-	rc.snapshotterReady <- rc.snapshotter
-
-	oldwal := wal.Exist(rc.waldir)
-	rc.wal = rc.replayWAL()
-	
-	rpeers := make([]raft.Peer, len(rc.peers))
-	for i := range rpeers {
-		rpeers[i] = raft.Peer{ID: uint64(i + 1)}
-	}
-	c := &raft.Config{
-		ID:                        uint64(rc.id),
-		ElectionTick:              10,
-		HeartbeatTick:             1,
-		Storage:                   rc.raftStorage,
-		MaxSizePerMsg:             1024 * 1024,
-		MaxInflightMsgs:           256,
-		MaxUncommittedEntriesSize: 1 << 30,
-	}
-	log.Info("Created Raft")
-	
-
-	
-	if oldwal {
-		rc.node = raft.RestartNode(c)
-	} else {
-		startPeers := rpeers
-		if rc.join {
-			startPeers = nil
-		}
-		rc.node = raft.StartNode(c, startPeers)
-	}
-
-	rc.transport = &transport.Transport{
-		ID:        types.ID(rc.id),
-		ClusterID: 0x1000,
-		Raft:      rc,
-		ErrorC:    make(chan error),
-	}
-
-	rc.transport.Start()
-	for i := range rc.peers {
-		if i+1 != rc.id {
-			rc.transport.AddPeer(types.ID(i+1), []string{rc.peers[i]})
-		}
-	}
-
-	go rc.serveRaft()
-	go rc.serveChannels()
-}
-
 // stop closes http, closes all channels, and stops raft.
 func (rc *easyRaft) stop() {
 	rc.stopHTTP()
@@ -369,16 +374,16 @@ func (rc *easyRaft) maybeTriggerSnapshot() {
 	rc.snapshotIndex = rc.appliedIndex
 }
 
-func (rc *easyRaft) serveChannels() {
-	snap, err := rc.raftStorage.Snapshot()
+func (easyRaft *easyRaft) serveChannels() {
+	snap, err := easyRaft.raftStorage.Snapshot()
 	if err != nil {
 		panic(err)
 	}
-	rc.confState = snap.Metadata.ConfState
-	rc.snapshotIndex = snap.Metadata.Index
-	rc.appliedIndex = snap.Metadata.Index
+	easyRaft.confState = snap.Metadata.ConfState
+	easyRaft.snapshotIndex = snap.Metadata.Index
+	easyRaft.appliedIndex = snap.Metadata.Index
 
-	defer rc.wal.Close()
+	defer easyRaft.wal.Close()
 
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
@@ -387,59 +392,71 @@ func (rc *easyRaft) serveChannels() {
 	go func() {
 		confChangeCount := uint64(0)
 
-		for rc.proposeC != nil && rc.confChangeC != nil {
+		for easyRaft.proposeC != nil && easyRaft.confChangeC != nil {
+			
 			select {
-			case prop, ok := <-rc.proposeC:
+			case prop, ok := <-easyRaft.proposeC:
+				log.Infof("Received proposed change: %v", prop)
 				if !ok {
-					rc.proposeC = nil
+					easyRaft.proposeC = nil
 				} else {
+					log.Infof("Processing proposed change: %v",prop)
 					// blocks until accepted by raft state machine
-					rc.node.Propose(context.TODO(), []byte(prop))
+					easyRaft.node.Propose(context.TODO(), []byte(prop))
+					log.Infof("Processed proposed change: %v",prop)
 				}
 
-			case cc, ok := <-rc.confChangeC:
+			case cc, ok := <-easyRaft.confChangeC:
+				log.Infof("Received config change: %v", cc)
 				if !ok {
-					rc.confChangeC = nil
+					easyRaft.confChangeC = nil
 				} else {
+					log.Infof("Processing config change: %v", cc)
 					confChangeCount++
 					cc.ID = confChangeCount
-					rc.node.ProposeConfChange(context.TODO(), cc)
+					easyRaft.node.ProposeConfChange(context.TODO(), cc)
+					log.Infof("Processed config change: %v", cc)
 				}
 			}
 		}
 		// client closed channel; shutdown raft if not already
-		close(rc.stopc)
+		close(easyRaft.stopc)
 	}()
 
 	// event loop on raft state machine updates
 	for {
 		select {
 		case <-ticker.C:
-			rc.node.Tick()
+			easyRaft.node.Tick()
 
 		// store raft entries to wal, then publish over commit channel
-		case rd := <-rc.node.Ready():
-			rc.wal.Save(rd.HardState, rd.Entries)
+		case rd := <-easyRaft.node.Ready():
+			log.Info("Node ready")
+			easyRaft.wal.Save(rd.HardState, rd.Entries)
+
+			log.Infof("Saved %d entries to WAL", len(rd.Entries))
 			if !raft.IsEmptySnap(rd.Snapshot) {
-				rc.saveSnap(rd.Snapshot)
-				rc.raftStorage.ApplySnapshot(rd.Snapshot)
-				rc.publishSnapshot(rd.Snapshot)
+				easyRaft.saveSnap(rd.Snapshot)
+				easyRaft.raftStorage.ApplySnapshot(rd.Snapshot)
+				easyRaft.publishSnapshot(rd.Snapshot)
 			}
-			rc.raftStorage.Append(rd.Entries)
-			rc.transport.Send(rd.Messages)
-			if ok := rc.publishEntries(rc.entriesToApply(rd.CommittedEntries)); !ok {
-				rc.stop()
+			easyRaft.raftStorage.Append(rd.Entries)
+			easyRaft.transport.Send(rd.Messages)
+
+
+			if ok := easyRaft.publishEntries(easyRaft.entriesToApply(rd.CommittedEntries)); !ok {
+				easyRaft.stop()
 				return
 			}
-			rc.maybeTriggerSnapshot()
-			rc.node.Advance()
+			easyRaft.maybeTriggerSnapshot()
+			easyRaft.node.Advance()
 
-		case err := <-rc.transport.ErrorC:
-			rc.writeError(err)
+		case err := <-easyRaft.transport.ErrorC:
+			easyRaft.writeError(err)
 			return
 
-		case <-rc.stopc:
-			rc.stop()
+		case <-easyRaft.stopc:
+			easyRaft.stop()
 			return
 		}
 	}

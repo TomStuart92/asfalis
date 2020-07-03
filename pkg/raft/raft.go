@@ -10,9 +10,12 @@ import (
 	"strings"
 	"sync"
 	"time"
-
+	"github.com/TomStuart92/asfalis/pkg/logger"
 	pb "github.com/TomStuart92/asfalis/pkg/raft/raftpb"
 )
+
+var homelog = logger.NewStdoutLogger("raft: ")
+
 
 // None is a placeholder node ID used when there is no leader.
 const None uint64 = 0
@@ -363,7 +366,7 @@ func newRaft(c *Config) *raft {
 		nodesStrs = append(nodesStrs, fmt.Sprintf("%x", n))
 	}
 
-	r.logger.Infof("newRaft %x [peers: [%s], term: %d, commit: %d, applied: %d, lastindex: %d, lastterm: %d]",
+	homelog.Infof("newRaft %x [peers: [%s], term: %d, commit: %d, applied: %d, lastindex: %d, lastterm: %d]",
 		r.id, strings.Join(nodesStrs, ","), r.Term, r.raftLog.committed, r.raftLog.applied, r.raftLog.lastIndex(), r.raftLog.lastTerm())
 	return r
 }
@@ -431,6 +434,7 @@ func (r *raft) send(m pb.Message) {
 			m.Term = r.Term
 		}
 	}
+	homelog.Infof("Raft sending message: %v", m)
 	r.msgs = append(r.msgs, m)
 }
 
@@ -678,7 +682,7 @@ func (r *raft) becomeFollower(term uint64, lead uint64) {
 	r.tick = r.tickElection
 	r.lead = lead
 	r.state = StateFollower
-	r.logger.Infof("%x became follower at term %d", r.id, r.Term)
+	homelog.Infof("%x became follower at term %d", r.id, r.Term)
 }
 
 func (r *raft) becomeCandidate() {
