@@ -29,10 +29,8 @@ func main() {
 	// the key-value http handler will propose updates to raft
 	api.Serve(kvs, *kvport)
 
-	select {
-	case err := <-errorChannel:
-		// api.Shutdown()
+	err := <-errorChannel
+	if err != nil {
 		log.Fatal(err)
-
 	}
 }

@@ -67,7 +67,7 @@ func (s Status) MarshalJSON() ([]byte, error) {
 func (s Status) String() string {
 	b, err := s.MarshalJSON()
 	if err != nil {
-		raftLogger.Panicf("unexpected error: %v", err)
+		log.Panicf("unexpected error: %v", err)
 	}
 	return string(b)
 }

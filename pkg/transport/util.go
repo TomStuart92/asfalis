@@ -16,8 +16,7 @@ import (
 )
 
 var (
-	errMemberRemoved  = fmt.Errorf("the member has been permanently removed from the cluster")
-	errMemberNotFound = fmt.Errorf("member not found")
+	errMemberRemoved = fmt.Errorf("the member has been permanently removed from the cluster")
 )
 
 // NewListener returns a listener for raft message transfer between peers.

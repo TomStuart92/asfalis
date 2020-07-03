@@ -34,7 +34,7 @@ func TestPropose(t *testing.T) {
 	d := NewDistributedStore(proposeC, commitC)
 	d.Propose("key", "value")
 	select {
-	case _ = <-proposeC:
+	case <-proposeC:
 		return
 	default:
 		t.Error("No Proposal Recieved")

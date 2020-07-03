@@ -3,7 +3,6 @@ package transport
 import (
 	"bytes"
 	"context"
-	"errors"
 	"io/ioutil"
 	"sync"
 	"time"
@@ -22,8 +21,6 @@ const (
 	// is out of work for less than 1 second in good path.
 	pipelineBufSize = 64
 )
-
-var errStopped = errors.New("stopped")
 
 type pipeline struct {
 	peerID types.ID

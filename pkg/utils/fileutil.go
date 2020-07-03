@@ -6,8 +6,6 @@ import (
 	"io/ioutil"
 	"os"
 	"path/filepath"
-
-	"github.com/coreos/pkg/capnslog"
 )
 
 const (
@@ -15,10 +13,6 @@ const (
 	PrivateFileMode = 0600
 	// PrivateDirMode grants owner to make/remove files inside the directory.
 	PrivateDirMode = 0700
-)
-
-var (
-	plog = capnslog.NewPackageLogger("github.com/coreos/etcd", "pkg/fileutil")
 )
 
 // OpenDir opens a directory for syncing.

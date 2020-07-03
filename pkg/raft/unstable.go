@@ -12,8 +12,6 @@ type unstable struct {
 	// all entries that have not yet been written to storage.
 	entries []pb.Entry
 	offset  uint64
-
-	logger Logger
 }
 
 // maybeFirstIndex returns the index of the first possible entry in entries
@@ -114,7 +112,7 @@ func (u *unstable) truncateAndAppend(ents []pb.Entry) {
 		// directly append
 		u.entries = append(u.entries, ents...)
 	case after <= u.offset:
-		u.logger.Infof("replace the unstable entries from index %d", after)
+		log.Infof("replace the unstable entries from index %d", after)
 		// The log is being truncated to before our current offset
 		// portion, so set the offset and replace the entries
 		u.offset = after
@@ -122,7 +120,7 @@ func (u *unstable) truncateAndAppend(ents []pb.Entry) {
 	default:
 		// truncate to after and copy to u.entries
 		// then append
-		u.logger.Infof("truncate the unstable entries before index %d", after)
+		log.Infof("truncate the unstable entries before index %d", after)
 		u.entries = append([]pb.Entry{}, u.slice(u.offset, after)...)
 		u.entries = append(u.entries, ents...)
 	}
@@ -136,10 +134,10 @@ func (u *unstable) slice(lo uint64, hi uint64) []pb.Entry {
 // u.offset <= lo <= hi <= u.offset+len(u.entries)
 func (u *unstable) mustCheckOutOfBounds(lo, hi uint64) {
 	if lo > hi {
-		u.logger.Panicf("invalid unstable.slice %d > %d", lo, hi)
+		log.Panicf("invalid unstable.slice %d > %d", lo, hi)
 	}
 	upper := u.offset + uint64(len(u.entries))
 	if lo < u.offset || hi > upper {
-		u.logger.Panicf("unstable.slice[%d,%d) out of bound [%d,%d]", lo, hi, u.offset, upper)
+		log.Panicf("unstable.slice[%d,%d) out of bound [%d,%d]", lo, hi, u.offset, upper)
 	}
 }
