@@ -6,14 +6,14 @@ import (
 	"github.com/TomStuart92/asfalis/pkg/logger"
 )
 
-var log = logger.NewStdoutLogger("store: ")
+var log = logger.NewStdoutLogger("store")
 
 // DistributedStore is a key-value store which is designed to propose changes
 // and read commits from a pair of channels. These channels are usually backed
 // by an implementation of the Raft algorithm.
 type DistributedStore struct {
 	proposeC chan<- string
-	commitC  <-chan *string
+	commitC  <-chan string
 	store    *LocalStore
 }
 
@@ -29,7 +29,7 @@ func (kv *keyValue) Encode() ([]byte, error) {
 }
 
 // NewDistributedStore creates a new instance of a DistributedStore
-func NewDistributedStore(proposeC chan<- string, commitC <-chan *string) *DistributedStore {
+func NewDistributedStore(proposeC chan<- string, commitC <-chan string) *DistributedStore {
 	s := &DistributedStore{
 		proposeC,
 		commitC,
@@ -41,6 +41,7 @@ func NewDistributedStore(proposeC chan<- string, commitC <-chan *string) *Distri
 
 // Lookup delegates a request through to the underlying store instance
 func (s *DistributedStore) Lookup(key string) (string, bool) {
+	log.Infof("Looking up key %s", key)
 	return s.store.Get(key)
 }
 
@@ -57,7 +58,6 @@ func (s *DistributedStore) Propose(key string, value string) error {
 
 	s.proposeC <- string(bytes)
 	log.Infof("Proposed setting %s => %s", key, value)
-
 	return nil
 }
 
@@ -65,24 +65,23 @@ func (s *DistributedStore) Propose(key string, value string) error {
 //  and applies them as appropriate
 func (s *DistributedStore) readCommits() {
 	for data := range s.commitC {
-		if data == nil {
+		if data == "" {
 			continue
 		}
 
-		log.Infof("Received data in commit channel: %v", data)
+		log.Infof("Received data from commit channel: %v", data)
 
 		var kv keyValue
-		if err := json.Unmarshal([]byte(*data), &kv); err != nil {
+		if err := json.Unmarshal([]byte(data), &kv); err != nil {
 			log.Fatalf("Failed to decode message (%v)", err)
 		}
 
 		if kv.Value == "" {
-			log.Infof("deleting %s ", kv.Key)
+			log.Infof("Key %s Deleted", kv.Key)
 			s.store.Delete(kv.Key)
 		} else {
-			log.Infof("setting %s => %s", kv.Key, kv.Value)
+			log.Infof("Setting %s => %s", kv.Key, kv.Value)
 			s.store.Set(kv.Key, kv.Value)
 		}
 	}
-	log.Fatal("COMMIT CHANNEL CLOSED")
 }

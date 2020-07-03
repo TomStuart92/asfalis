@@ -3,6 +3,7 @@ package easyraft
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -16,13 +17,13 @@ import (
 	"go.etcd.io/etcd/pkg/types"
 )
 
-var log *logger.Logger = logger.NewStdoutLogger("EASYRAFT: ")
+var log *logger.Logger = logger.NewStdoutLogger("easyraft")
 
 // A key-value stream backed by raft
 type easyRaft struct {
 	proposeC    <-chan string            // proposed messages (k,v)
 	confChangeC <-chan raftpb.ConfChange // proposed cluster config changes
-	commitC     chan<- *string           // entries committed to log (k,v)
+	commitC     chan<- string            // entries committed to log (k,v)
 	errorC      chan<- error             // errors from raft session
 
 	id          int                    // client ID for raft session
@@ -42,9 +43,6 @@ type easyRaft struct {
 
 	snapCount uint64
 	transport *transport.Transport
-	stopc     chan struct{} // signals proposal channel closed
-	httpstopc chan struct{} // signals http server to shutdown
-	httpdonec chan struct{} // signals http server shutdown complete
 }
 
 var defaultSnapshotCount uint64 = 10000
@@ -54,13 +52,10 @@ var defaultSnapshotCount uint64 = 10000
 // provided the proposal channel. All log entries are replayed over the
 // commit channel, followed by a nil message (to indicate the channel is
 // current), then new log entries. To shutdown, close proposeC and read errorC.
-func NewRaftNode(id int, peers []string, join bool, proposeC <-chan string) (<-chan *string, <-chan error) {
-
+func NewRaftNode(id int, peers []string, join bool, proposeC <-chan string) (<-chan string, <-chan error) {
 	confChangeC := make(chan raftpb.ConfChange)
-	commitC := make(chan *string)
+	commitC := make(chan string)
 	errorC := make(chan error)
-
-	log.Info("Setup channels")
 
 	easyraft := &easyRaft{
 		proposeC:    proposeC,
@@ -72,9 +67,6 @@ func NewRaftNode(id int, peers []string, join bool, proposeC <-chan string) (<-c
 		join:        join,
 		snapdir:     fmt.Sprintf("/tmp/raftexample-%v-snap", time.Now()),
 		snapCount:   defaultSnapshotCount,
-		stopc:       make(chan struct{}),
-		httpstopc:   make(chan struct{}),
-		httpdonec:   make(chan struct{}),
 	}
 	go easyraft.startRaft()
 	return commitC, errorC
@@ -153,9 +145,7 @@ func (rc *easyRaft) publishEntries(ents []raftpb.Entry) bool {
 			s := string(ents[i].Data)
 			log.Infof("Writing data into commit channel %s", s)
 			select {
-			case rc.commitC <- &s:
-			case <-rc.stopc:
-				return false
+			case rc.commitC <- s:
 			}
 
 		case raftpb.EntryConfChange:
@@ -185,9 +175,7 @@ func (rc *easyRaft) publishEntries(ents []raftpb.Entry) bool {
 		// special nil commit to signal replay has finished
 		if ents[i].Index == rc.lastIndex {
 			select {
-			case rc.commitC <- nil:
-			case <-rc.stopc:
-				return false
+			case rc.commitC <- "":
 			}
 		}
 	}
@@ -195,25 +183,10 @@ func (rc *easyRaft) publishEntries(ents []raftpb.Entry) bool {
 }
 
 func (rc *easyRaft) writeError(err error) {
-	rc.stopHTTP()
 	close(rc.commitC)
 	rc.errorC <- err
 	close(rc.errorC)
 	rc.node.Stop()
-}
-
-// stop closes http, closes all channels, and stops raft.
-func (rc *easyRaft) stop() {
-	rc.stopHTTP()
-	close(rc.commitC)
-	close(rc.errorC)
-	rc.node.Stop()
-}
-
-func (rc *easyRaft) stopHTTP() {
-	rc.transport.Stop()
-	close(rc.httpstopc)
-	<-rc.httpdonec
 }
 
 func (rc *easyRaft) publishSnapshot(snapshotToSave raftpb.Snapshot) {
@@ -227,7 +200,7 @@ func (rc *easyRaft) publishSnapshot(snapshotToSave raftpb.Snapshot) {
 	if snapshotToSave.Metadata.Index <= rc.appliedIndex {
 		log.Fatalf("snapshot index [%d] should > progress.appliedIndex [%d]", snapshotToSave.Metadata.Index, rc.appliedIndex)
 	}
-	rc.commitC <- nil // trigger kvstore to load snapshot
+	rc.commitC <- ""
 
 	rc.confState = snapshotToSave.Metadata.ConfState
 	rc.snapshotIndex = snapshotToSave.Metadata.Index
@@ -277,8 +250,6 @@ func (easyRaft *easyRaft) serveChannels() {
 				}
 			}
 		}
-		// client closed channel; shutdown raft if not already
-		close(easyRaft.stopc)
 	}()
 
 	// event loop on raft state machine updates
@@ -294,7 +265,6 @@ func (easyRaft *easyRaft) serveChannels() {
 			if ok := easyRaft.publishEntries(
 				easyRaft.entriesToApply(rd.CommittedEntries),
 			); !ok {
-				easyRaft.stop()
 				return
 			}
 			easyRaft.node.Advance()
@@ -303,31 +273,8 @@ func (easyRaft *easyRaft) serveChannels() {
 			easyRaft.writeError(err)
 			return
 
-		case <-easyRaft.stopc:
-			easyRaft.stop()
-			return
 		}
 	}
-}
-
-func (rc *easyRaft) serveRaft() {
-	url, err := url.Parse(rc.peers[rc.id-1])
-	if err != nil {
-		log.Fatalf("raftexample: Failed parsing URL (%v)", err)
-	}
-
-	ln, err := newStoppableListener(url.Host, rc.httpstopc)
-	if err != nil {
-		log.Fatalf("raftexample: Failed to listen transport (%v)", err)
-	}
-
-	err = (&http.Server{Handler: rc.transport.Handler()}).Serve(ln)
-	select {
-	case <-rc.httpstopc:
-	default:
-		log.Fatalf("raftexample: Failed to serve transport (%v)", err)
-	}
-	close(rc.httpdonec)
 }
 
 func (rc *easyRaft) Process(ctx context.Context, m raftpb.Message) error {
@@ -336,3 +283,23 @@ func (rc *easyRaft) Process(ctx context.Context, m raftpb.Message) error {
 func (rc *easyRaft) IsIDRemoved(id uint64) bool                           { return false }
 func (rc *easyRaft) ReportUnreachable(id uint64)                          {}
 func (rc *easyRaft) ReportSnapshot(id uint64, status raft.SnapshotStatus) {}
+
+func (rc *easyRaft) serveRaft() {
+	srv := http.Server{
+		Handler: rc.transport.Handler(),
+	}
+
+	url, err := url.Parse(rc.peers[rc.id-1])
+	if err != nil {
+		log.Fatalf("Failed parsing URL: %v", err)
+	}
+
+	ln, err := net.Listen("tcp", url.Host)
+	if err != nil {
+		log.Fatalf("Failed to create listener: %v", err)
+	}
+
+	if err := srv.Serve(ln); err != nil {
+		log.Fatalf("Failed to start server: %v", err)
+	}
+}

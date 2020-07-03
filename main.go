@@ -1,7 +1,9 @@
 package main
 
 import (
+	"context"
 	"flag"
+	"os"
 	"strings"
 
 	"github.com/TomStuart92/asfalis/pkg/api"
@@ -10,7 +12,7 @@ import (
 	"github.com/TomStuart92/asfalis/pkg/store"
 )
 
-var log = logger.NewStdoutLogger("main.go: ")
+var log = logger.NewStdoutLogger("startup")
 
 func main() {
 	cluster := flag.String("cluster", "", "comma separated cluster peers")
@@ -19,18 +21,24 @@ func main() {
 	join := flag.Bool("join", false, "join an existing cluster")
 	flag.Parse()
 
+	ctx := context.Background()
 	proposeChannel := make(chan string)
 
 	// raft provides a commit stream for the proposals from the http api
 	commitChannel, errorChannel := easyraft.NewRaftNode(*id, strings.Split(*cluster, ","), *join, proposeChannel)
+	log.Info("Started Raft Node")
 
 	kvs := store.NewDistributedStore(proposeChannel, commitChannel)
+	log.Info("Created Key-Value Store")
 
 	// the key-value http handler will propose updates to raft
-	api.Serve(kvs, *kvport)
+	go api.Serve(kvs, *kvport)
+	log.Info("Started API Server")
 
 	err := <-errorChannel
 	if err != nil {
-		log.Fatal(err)
+		log.Error(err)
+		api.Shutdown(ctx)
+		os.Exit(1)
 	}
 }

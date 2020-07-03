@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"io/ioutil"
 	"net/http"
 	"strconv"
@@ -9,11 +10,11 @@ import (
 	"github.com/TomStuart92/asfalis/pkg/store"
 )
 
-var log *logger.Logger = logger.NewStdoutLogger("HTTP-API: ")
+var log *logger.Logger = logger.NewStdoutLogger("api")
 var srv http.Server
 
 type httpAPI struct {
-	store       *store.DistributedStore
+	store *store.DistributedStore
 }
 
 func (h *httpAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -26,9 +27,11 @@ func (h *httpAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Failed to PUT", http.StatusBadRequest)
 			return
 		}
+		log.Infof("Received request to set key %s to value %s", key, value)
 		h.store.Propose(key, string(value))
 		w.WriteHeader(http.StatusNoContent)
 	case r.Method == "GET":
+		log.Infof("Received request to get key %s", key)
 		if value, ok := h.store.Lookup(key); ok {
 			_, err := w.Write([]byte(value))
 			if err != nil {
@@ -38,6 +41,7 @@ func (h *httpAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Failed to GET", http.StatusNotFound)
 		}
 	case r.Method == "DELETE":
+		log.Infof("Received request to unset key %s", key)
 		h.store.Propose(key, "")
 		w.WriteHeader(http.StatusNoContent)
 		return
@@ -49,17 +53,21 @@ func (h *httpAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// ServeHTTP starts HTTP server
+// Serve starts HTTP server
 func Serve(kv *store.DistributedStore, port int) {
 	srv = http.Server{
 		Addr: ":" + strconv.Itoa(port),
 		Handler: &httpAPI{
-			store:       kv,
+			store: kv,
 		},
 	}
-	
-	log.Info("Starting server")
+
 	if err := srv.ListenAndServe(); err != nil {
 		log.Fatal(err)
 	}
+}
+
+// Shutdown terminates the HTTP
+func Shutdown(ctx context.Context) {
+	srv.Shutdown(ctx)
 }

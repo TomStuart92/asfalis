@@ -228,19 +228,6 @@ func (l *raftLog) entries(i, maxsize uint64) ([]pb.Entry, error) {
 	return l.slice(i, l.lastIndex()+1, maxsize)
 }
 
-// allEntries returns all entries in the log.
-func (l *raftLog) allEntries() []pb.Entry {
-	ents, err := l.entries(l.firstIndex(), noLimit)
-	if err == nil {
-		return ents
-	}
-	if err == ErrCompacted { // try again if there was a racing compaction
-		return l.allEntries()
-	}
-	// TODO (xiangli): handle error?
-	panic(err)
-}
-
 // isUpToDate determines if the given (lastIndex,term) log is more up-to-date
 // by comparing the index and term of the last entries in the existing logs.
 // If the logs have last entries with different terms, then the log with the
