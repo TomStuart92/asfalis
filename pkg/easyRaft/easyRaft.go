@@ -99,7 +99,7 @@ func (easyRaft *easyRaft) startRaft() {
 	easyRaft.snapshotter = snap.New(easyRaft.snapdir)
 	easyRaft.snapshotterReady <- easyRaft.snapshotter
 
-
+	easyRaft.raftStorage = raft.NewMemoryStorage()
 	
 	rpeers := make([]raft.Peer, len(easyRaft.peers))
 	for i := range rpeers {
