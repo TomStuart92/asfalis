@@ -9,7 +9,6 @@ import (
 	"github.com/TomStuart92/asfalis/pkg/logger"
 	"github.com/TomStuart92/asfalis/pkg/raft"
 	"github.com/TomStuart92/asfalis/pkg/raft/raftpb"
-	"github.com/TomStuart92/asfalis/pkg/snap"
 	"github.com/xiang90/probing"
 	"go.etcd.io/etcd/pkg/transport"
 	"go.etcd.io/etcd/pkg/types"
@@ -41,9 +40,6 @@ type Transporter interface {
 	// If the id cannot be found in the transport, the message
 	// will be ignored.
 	Send(m []raftpb.Message)
-	// SendSnapshot sends out the given snapshot message to a remote peer.
-	// The behavior of SendSnapshot is similar to Send.
-	SendSnapshot(m snap.Message)
 	// AddRemote adds a remote with given peer urls into the transport.
 	// A remote helps newly joined member to catch up the progress of cluster,
 	// and will not be used after that.
@@ -88,11 +84,10 @@ type Transport struct {
 
 	TLSInfo transport.TLSInfo // TLS information used when creating connection
 
-	ID          types.ID   // local member ID
-	URLs        types.URLs // local peer URLs
-	ClusterID   types.ID   // raft cluster ID for request validation
-	Raft        Raft       // raft state machine, to which the Transport forwards received messages and reports status
-	Snapshotter *snap.Snapshotter
+	ID        types.ID   // local member ID
+	URLs      types.URLs // local peer URLs
+	ClusterID types.ID   // raft cluster ID for request validation
+	Raft      Raft       // raft state machine, to which the Transport forwards received messages and reports status
 
 	// ErrorC is used to report detected critical errors, e.g.,
 	// the member has been permanently removed from the cluster
@@ -138,11 +133,9 @@ func (t *Transport) Start() error {
 func (t *Transport) Handler() http.Handler {
 	pipelineHandler := newPipelineHandler(t, t.Raft, t.ClusterID)
 	streamHandler := newStreamHandler(t, t, t.Raft, t.ID, t.ClusterID)
-	snapHandler := newSnapshotHandler(t, t.Raft, t.Snapshotter, t.ClusterID)
 	mux := http.NewServeMux()
 	mux.Handle(RaftPrefix, pipelineHandler)
 	mux.Handle(RaftStreamPrefix+"/", streamHandler)
-	mux.Handle(RaftSnapshotPrefix, snapHandler)
 	mux.Handle(ProbingPrefix, probing.NewHandler())
 	return mux
 }
@@ -325,17 +318,6 @@ func (t *Transport) ActiveSince(id types.ID) time.Time {
 		return p.activeSince()
 	}
 	return time.Time{}
-}
-
-func (t *Transport) SendSnapshot(m snap.Message) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	p := t.peers[types.ID(m.To)]
-	if p == nil {
-		m.CloseWithError(errMemberNotFound)
-		return
-	}
-	p.sendSnap(m)
 }
 
 // Pausable is a testing interface for pausing transport traffic.

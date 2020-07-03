@@ -7,7 +7,6 @@ import (
 
 	"github.com/TomStuart92/asfalis/pkg/raft"
 	"github.com/TomStuart92/asfalis/pkg/raft/raftpb"
-	"github.com/TomStuart92/asfalis/pkg/snap"
 	"go.etcd.io/etcd/pkg/types"
 	"golang.org/x/time/rate"
 )
@@ -44,10 +43,6 @@ type Peer interface {
 	// When it fails to send message out, it will report the status to underlying
 	// raft.
 	send(m raftpb.Message)
-
-	// sendSnap sends the merged snapshot message to the remote peer. Its behavior
-	// is similar to send.
-	sendSnap(m snap.Message)
 
 	// update updates the urls of remote peer.
 	update(urls types.URLs)
@@ -90,7 +85,6 @@ type peer struct {
 	msgAppV2Writer *streamWriter
 	writer         *streamWriter
 	pipeline       *pipeline
-	snapSender     *snapshotSender // snapshot sender to send v3 snapshot messages
 	msgAppV2Reader *streamReader
 	msgAppReader   *streamReader
 
@@ -133,7 +127,6 @@ func startPeer(t *Transport, urls types.URLs, peerID types.ID) *peer {
 		msgAppV2Writer: startStreamWriter(t.ID, peerID, status, r),
 		writer:         startStreamWriter(t.ID, peerID, status, r),
 		pipeline:       pipeline,
-		snapSender:     newSnapshotSender(t, picker, peerID, status),
 		recvc:          make(chan raftpb.Message, recvBufSize),
 		propc:          make(chan raftpb.Message, maxPendingProposals),
 		stopc:          make(chan struct{}),
@@ -222,10 +215,6 @@ func (p *peer) send(m raftpb.Message) {
 	}
 }
 
-func (p *peer) sendSnap(m snap.Message) {
-	go p.snapSender.send(m)
-}
-
 func (p *peer) update(urls types.URLs) {
 	p.picker.update(urls)
 }
@@ -278,7 +267,6 @@ func (p *peer) stop() {
 	p.msgAppV2Writer.stop()
 	p.writer.stop()
 	p.pipeline.stop()
-	p.snapSender.stop()
 	p.msgAppV2Reader.stop()
 	p.msgAppReader.stop()
 }

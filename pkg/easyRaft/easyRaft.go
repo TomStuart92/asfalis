@@ -11,7 +11,6 @@ import (
 	"github.com/TomStuart92/asfalis/pkg/logger"
 	"github.com/TomStuart92/asfalis/pkg/raft"
 	"github.com/TomStuart92/asfalis/pkg/raft/raftpb"
-	"github.com/TomStuart92/asfalis/pkg/snap"
 	"github.com/TomStuart92/asfalis/pkg/transport"
 	"go.etcd.io/etcd/pkg/fileutil"
 	"go.etcd.io/etcd/pkg/types"
@@ -41,9 +40,6 @@ type easyRaft struct {
 	node        raft.Node
 	raftStorage *raft.MemoryStorage
 
-	snapshotter      *snap.Snapshotter
-	snapshotterReady chan *snap.Snapshotter // signals when snapshotter is ready
-
 	snapCount uint64
 	transport *transport.Transport
 	stopc     chan struct{} // signals proposal channel closed
@@ -58,7 +54,7 @@ var defaultSnapshotCount uint64 = 10000
 // provided the proposal channel. All log entries are replayed over the
 // commit channel, followed by a nil message (to indicate the channel is
 // current), then new log entries. To shutdown, close proposeC and read errorC.
-func NewRaftNode(id int, peers []string, join bool, getSnapshot func() ([]byte, error), proposeC <-chan string) (<-chan *string, <-chan error, <-chan *snap.Snapshotter) {
+func NewRaftNode(id int, peers []string, join bool, proposeC <-chan string) (<-chan *string, <-chan error) {
 
 	confChangeC := make(chan raftpb.ConfChange)
 	commitC := make(chan *string)
@@ -74,19 +70,15 @@ func NewRaftNode(id int, peers []string, join bool, getSnapshot func() ([]byte, 
 		id:          id,
 		peers:       peers,
 		join:        join,
-		snapdir:     fmt.Sprintf("/tmp/raftexample-%v-snap",  time.Now()),
-		getSnapshot: getSnapshot,
+		snapdir:     fmt.Sprintf("/tmp/raftexample-%v-snap", time.Now()),
 		snapCount:   defaultSnapshotCount,
 		stopc:       make(chan struct{}),
 		httpstopc:   make(chan struct{}),
 		httpdonec:   make(chan struct{}),
-
-		snapshotterReady: make(chan *snap.Snapshotter, 1),
 	}
 	go easyraft.startRaft()
-	return commitC, errorC, easyraft.snapshotterReady
+	return commitC, errorC
 }
-
 
 func (easyRaft *easyRaft) startRaft() {
 	if !fileutil.Exist(easyRaft.snapdir) {
@@ -95,12 +87,8 @@ func (easyRaft *easyRaft) startRaft() {
 		}
 	}
 
-	// create a new snapshotter
-	easyRaft.snapshotter = snap.New(easyRaft.snapdir)
-	easyRaft.snapshotterReady <- easyRaft.snapshotter
-
 	easyRaft.raftStorage = raft.NewMemoryStorage()
-	
+
 	rpeers := make([]raft.Peer, len(easyRaft.peers))
 	for i := range rpeers {
 		rpeers[i] = raft.Peer{ID: uint64(i + 1)}
@@ -115,13 +103,11 @@ func (easyRaft *easyRaft) startRaft() {
 		MaxUncommittedEntriesSize: 1 << 30,
 	}
 
-	
-
-		startPeers := rpeers
-		if easyRaft.join {
-			startPeers = nil
-		}
-		easyRaft.node = raft.StartNode(c, startPeers)
+	startPeers := rpeers
+	if easyRaft.join {
+		startPeers = nil
+	}
+	easyRaft.node = raft.StartNode(c, startPeers)
 
 	easyRaft.transport = &transport.Transport{
 		ID:        types.ID(easyRaft.id),
@@ -138,15 +124,6 @@ func (easyRaft *easyRaft) startRaft() {
 	}
 	go easyRaft.serveRaft()
 	go easyRaft.serveChannels()
-}
-
-
-
-func (rc *easyRaft) saveSnap(snap raftpb.Snapshot) error {
-	if err := rc.snapshotter.SaveSnap(snap); err != nil {
-		return err
-	}
-	return nil
 }
 
 func (rc *easyRaft) entriesToApply(ents []raftpb.Entry) (nents []raftpb.Entry) {
@@ -217,17 +194,6 @@ func (rc *easyRaft) publishEntries(ents []raftpb.Entry) bool {
 	return true
 }
 
-func (rc *easyRaft) loadSnapshot() *raftpb.Snapshot {
-	snapshot, err := rc.snapshotter.Load()
-	if err != nil && err != snap.ErrNoSnapshot {
-		log.Fatalf("raftexample: error loading snapshot (%v)", err)
-	}
-	return snapshot
-}
-
-
-
-
 func (rc *easyRaft) writeError(err error) {
 	rc.stopHTTP()
 	close(rc.commitC)
@@ -268,38 +234,6 @@ func (rc *easyRaft) publishSnapshot(snapshotToSave raftpb.Snapshot) {
 	rc.appliedIndex = snapshotToSave.Metadata.Index
 }
 
-var snapshotCatchUpEntriesN uint64 = 10000
-
-func (rc *easyRaft) maybeTriggerSnapshot() {
-	if rc.appliedIndex-rc.snapshotIndex <= rc.snapCount {
-		return
-	}
-
-	log.Printf("start snapshot [applied index: %d | last snapshot index: %d]", rc.appliedIndex, rc.snapshotIndex)
-	data, err := rc.getSnapshot()
-	if err != nil {
-		log.Panic(err)
-	}
-	snap, err := rc.raftStorage.CreateSnapshot(rc.appliedIndex, &rc.confState, data)
-	if err != nil {
-		panic(err)
-	}
-	if err := rc.saveSnap(snap); err != nil {
-		panic(err)
-	}
-
-	compactIndex := uint64(1)
-	if rc.appliedIndex > snapshotCatchUpEntriesN {
-		compactIndex = rc.appliedIndex - snapshotCatchUpEntriesN
-	}
-	if err := rc.raftStorage.Compact(compactIndex); err != nil {
-		panic(err)
-	}
-
-	log.Printf("compacted log at index %d", compactIndex)
-	rc.snapshotIndex = rc.appliedIndex
-}
-
 func (easyRaft *easyRaft) serveChannels() {
 	snap, err := easyRaft.raftStorage.Snapshot()
 	if err != nil {
@@ -309,7 +243,6 @@ func (easyRaft *easyRaft) serveChannels() {
 	easyRaft.snapshotIndex = snap.Metadata.Index
 	easyRaft.appliedIndex = snap.Metadata.Index
 
-
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
 
@@ -318,17 +251,17 @@ func (easyRaft *easyRaft) serveChannels() {
 		confChangeCount := uint64(0)
 
 		for easyRaft.proposeC != nil && easyRaft.confChangeC != nil {
-			
+
 			select {
 			case prop, ok := <-easyRaft.proposeC:
 				log.Infof("Received proposed change: %v", prop)
 				if !ok {
 					easyRaft.proposeC = nil
 				} else {
-					log.Infof("Processing proposed change: %v",prop)
+					log.Infof("Processing proposed change: %v", prop)
 					// blocks until accepted by raft state machine
 					easyRaft.node.Propose(context.TODO(), []byte(prop))
-					log.Infof("Processed proposed change: %v",prop)
+					log.Infof("Processed proposed change: %v", prop)
 				}
 
 			case cc, ok := <-easyRaft.confChangeC:
@@ -355,22 +288,15 @@ func (easyRaft *easyRaft) serveChannels() {
 			easyRaft.node.Tick()
 
 		case rd := <-easyRaft.node.Ready():
-			log.Info("Node ready")
-
-			if !raft.IsEmptySnap(rd.Snapshot) {
-				easyRaft.saveSnap(rd.Snapshot)
-				easyRaft.raftStorage.ApplySnapshot(rd.Snapshot)
-				easyRaft.publishSnapshot(rd.Snapshot)
-			}
 			easyRaft.raftStorage.Append(rd.Entries)
 			easyRaft.transport.Send(rd.Messages)
 
-
-			if ok := easyRaft.publishEntries(easyRaft.entriesToApply(rd.CommittedEntries)); !ok {
+			if ok := easyRaft.publishEntries(
+				easyRaft.entriesToApply(rd.CommittedEntries),
+			); !ok {
 				easyRaft.stop()
 				return
 			}
-			easyRaft.maybeTriggerSnapshot()
 			easyRaft.node.Advance()
 
 		case err := <-easyRaft.transport.ErrorC:

@@ -3,22 +3,18 @@ package store
 import (
 	"encoding/json"
 
-	"github.com/TomStuart92/asfalis/pkg/snap"
 	"github.com/TomStuart92/asfalis/pkg/logger"
 )
 
 var log = logger.NewStdoutLogger("store: ")
 
-
-
 // DistributedStore is a key-value store which is designed to propose changes
 // and read commits from a pair of channels. These channels are usually backed
 // by an implementation of the Raft algorithm.
 type DistributedStore struct {
-	proposeC    chan<- string
-	commitC     <-chan *string
-	store       *LocalStore
-	snapshotter snap.Snapper
+	proposeC chan<- string
+	commitC  <-chan *string
+	store    *LocalStore
 }
 
 // keyValue is an internal representation of a key-value pair used to send such
@@ -29,16 +25,15 @@ type keyValue struct {
 }
 
 func (kv *keyValue) Encode() ([]byte, error) {
- 	return json.Marshal(kv)
+	return json.Marshal(kv)
 }
 
 // NewDistributedStore creates a new instance of a DistributedStore
-func NewDistributedStore(snapshotter snap.Snapper, proposeC chan<- string, commitC <-chan *string) *DistributedStore {
+func NewDistributedStore(proposeC chan<- string, commitC <-chan *string) *DistributedStore {
 	s := &DistributedStore{
-		proposeC, 
-		commitC, 
-		NewLocalStore(), 
-		snapshotter,
+		proposeC,
+		commitC,
+		NewLocalStore(),
 	}
 	go s.readCommits()
 	return s
@@ -52,7 +47,7 @@ func (s *DistributedStore) Lookup(key string) (string, bool) {
 // Propose a change to the store through the proposeC channel
 func (s *DistributedStore) Propose(key string, value string) error {
 	kv := keyValue{
-		Key: key, 
+		Key:   key,
 		Value: value,
 	}
 	bytes, err := kv.Encode()
@@ -71,20 +66,7 @@ func (s *DistributedStore) Propose(key string, value string) error {
 func (s *DistributedStore) readCommits() {
 	for data := range s.commitC {
 		if data == nil {
-			log.Info("nil data received in commit channel, loading from snapshot")
-			snapshot, err := s.snapshotter.Load()
-			if err == snap.ErrNoSnapshot {
-				log.Info("no snapshot available, continuing...")
-				continue
-			}
-			if err != nil {
-				log.Panic(err)
-			}
-			log.Infof("loading snapshot at term %d and index %d", snapshot.Metadata.Term, snapshot.Metadata.Index)
-			if err := s.recoverFromSnapshot(snapshot.Data); err != nil {
-				log.Panic(err)
-			}
-			// continue
+			continue
 		}
 
 		log.Infof("Received data in commit channel: %v", data)
@@ -103,19 +85,4 @@ func (s *DistributedStore) readCommits() {
 		}
 	}
 	log.Fatal("COMMIT CHANNEL CLOSED")
-}
-
-// GetSnapshot delegates a request through to the underlying store instance
-func (s *DistributedStore) GetSnapshot() ([]byte, error) {
-	return s.store.GetSnapshot()
-}
-
-// recoverFromSnapshot allows for the recovery of data from a snapshot.
-func (s *DistributedStore) recoverFromSnapshot(snapshot []byte) error {
-	var store map[string]string
-	if err := json.Unmarshal(snapshot, &store); err != nil {
-		return err
-	}
-	s.store.SetSnapshot(store)
-	return nil
 }

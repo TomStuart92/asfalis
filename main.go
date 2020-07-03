@@ -22,18 +22,17 @@ func main() {
 	proposeChannel := make(chan string)
 
 	// raft provides a commit stream for the proposals from the http api
-	var kvs *store.DistributedStore
-	commitChannel, errorChannel, snapshotterReady := easyraft.NewRaftNode(*id, strings.Split(*cluster, ","), *join, kvs.GetSnapshot, proposeChannel)
+	commitChannel, errorChannel := easyraft.NewRaftNode(*id, strings.Split(*cluster, ","), *join, proposeChannel)
 
-	kvs = store.NewDistributedStore(<-snapshotterReady, proposeChannel, commitChannel)
+	kvs := store.NewDistributedStore(proposeChannel, commitChannel)
 
 	// the key-value http handler will propose updates to raft
 	api.Serve(kvs, *kvport)
 
 	select {
-		case err := <- errorChannel:
-			// api.Shutdown()
-			log.Fatal(err)
+	case err := <-errorChannel:
+		// api.Shutdown()
+		log.Fatal(err)
 
 	}
 }

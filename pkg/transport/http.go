@@ -3,14 +3,12 @@ package transport
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io/ioutil"
 	"net/http"
 	"path"
 	"strings"
 
 	"github.com/TomStuart92/asfalis/pkg/raft/raftpb"
-	"github.com/TomStuart92/asfalis/pkg/snap"
 	pioutil "go.etcd.io/etcd/pkg/ioutil"
 	"go.etcd.io/etcd/pkg/types"
 	"go.etcd.io/etcd/version"
@@ -108,99 +106,6 @@ func (h *pipelineHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			w.(http.Flusher).Flush()
 			// disconnect the http stream
 			panic(err)
-		}
-		return
-	}
-
-	// Write StatusNoContent header after the message has been processed by
-	// raft, which facilitates the client to report MsgSnap status.
-	w.WriteHeader(http.StatusNoContent)
-}
-
-type snapshotHandler struct {
-	tr          Transporter
-	r           Raft
-	snapshotter *snap.Snapshotter
-
-	localID types.ID
-	cid     types.ID
-}
-
-func newSnapshotHandler(t *Transport, r Raft, snapshotter *snap.Snapshotter, cid types.ID) http.Handler {
-	return &snapshotHandler{
-		tr:          t,
-		r:           r,
-		snapshotter: snapshotter,
-		localID:     t.ID,
-		cid:         cid,
-	}
-}
-
-const unknownSnapshotSender = "UNKNOWN_SNAPSHOT_SENDER"
-
-// ServeHTTP serves HTTP request to receive and process snapshot message.
-//
-// If request sender dies without closing underlying TCP connection,
-// the handler will keep waiting for the request body until TCP keepalive
-// finds out that the connection is broken after several minutes.
-// This is acceptable because
-// 1. snapshot messages sent through other TCP connections could still be
-// received and processed.
-// 2. this case should happen rarely, so no further optimization is done.
-func (h *snapshotHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if r.Method != "POST" {
-		w.Header().Set("Allow", "POST")
-		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	w.Header().Set("X-Etcd-Cluster-ID", h.cid.String())
-
-	if err := checkClusterCompatibilityFromHeader(h.localID, r.Header, h.cid); err != nil {
-		http.Error(w, err.Error(), http.StatusPreconditionFailed)
-		return
-	}
-
-	addRemoteFromRequest(h.tr, r)
-
-	dec := &messageDecoder{r: r.Body}
-	// let snapshots be very large since they can exceed 512MB for large installations
-	m, err := dec.decodeLimit(uint64(1 << 63))
-	if err != nil {
-		msg := fmt.Sprintf("failed to decode raft message (%v)", err)
-		log.Error(msg)
-		http.Error(w, msg, http.StatusBadRequest)
-		return
-	}
-
-	if m.Type != raftpb.MsgSnap {
-		log.Errorf("unexpected raft message type %s on snapshot path", m.Type)
-		http.Error(w, "wrong raft message type", http.StatusBadRequest)
-		return
-	}
-	log.Infof("receiving database snapshot [index:%d, from %s] ...", m.Snapshot.Metadata.Index, types.ID(m.From))
-
-	// save incoming database snapshot.
-	_, err = h.snapshotter.SaveDBFrom(r.Body, m.Snapshot.Metadata.Index)
-	if err != nil {
-		msg := fmt.Sprintf("failed to save KV snapshot (%v)", err)
-		log.Error(msg)
-		http.Error(w, msg, http.StatusInternalServerError)
-		return
-	}
-
-	log.Infof("received and saved database snapshot [index: %d, from: %s] successfully", m.Snapshot.Metadata.Index, types.ID(m.From))
-
-	if err := h.r.Process(context.TODO(), m); err != nil {
-		switch v := err.(type) {
-		// Process may return writerToResponse error when doing some
-		// additional checks before calling raft.Node.Step.
-		case writerToResponse:
-			v.WriteTo(w)
-		default:
-			msg := fmt.Sprintf("failed to process raft message (%v)", err)
-			log.Errorf(msg)
-			http.Error(w, msg, http.StatusInternalServerError)
 		}
 		return
 	}
