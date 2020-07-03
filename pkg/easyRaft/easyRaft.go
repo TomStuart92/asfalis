@@ -62,9 +62,10 @@ var defaultSnapshotCount uint64 = 10000
 // provided the proposal channel. All log entries are replayed over the
 // commit channel, followed by a nil message (to indicate the channel is
 // current), then new log entries. To shutdown, close proposeC and read errorC.
-func NewRaftNode(id int, peers []string, join bool, getSnapshot func() ([]byte, error), proposeC <-chan string,
-	confChangeC <-chan raftpb.ConfChange) (<-chan *string, <-chan error, <-chan *snap.Snapshotter) {
+func NewRaftNode(id int, peers []string, join bool, getSnapshot func() ([]byte, error), proposeC <-chan string) (<-chan *string, <-chan error, <-chan *snap.Snapshotter) {
 
+	confChangeC := make(chan raftpb.ConfChange)
+	defer close(confChangeC)
 	commitC := make(chan *string)
 	errorC := make(chan error)
 
@@ -76,8 +77,8 @@ func NewRaftNode(id int, peers []string, join bool, getSnapshot func() ([]byte, 
 		id:          id,
 		peers:       peers,
 		join:        join,
-		waldir:      fmt.Sprintf("raftexample-%d", id),
-		snapdir:     fmt.Sprintf("raftexample-%d-snap", id),
+		waldir:      fmt.Sprintf("/tmp/raftexample-%d", id),
+		snapdir:     fmt.Sprintf("/tmp/raftexample-%d-snap", id),
 		getSnapshot: getSnapshot,
 		snapCount:   defaultSnapshotCount,
 		stopc:       make(chan struct{}),
@@ -258,7 +259,7 @@ func (rc *easyRaft) startRaft() {
 
 	oldwal := wal.Exist(rc.waldir)
 	rc.wal = rc.replayWAL()
-
+	
 	rpeers := make([]raft.Peer, len(rc.peers))
 	for i := range rpeers {
 		rpeers[i] = raft.Peer{ID: uint64(i + 1)}
@@ -272,7 +273,10 @@ func (rc *easyRaft) startRaft() {
 		MaxInflightMsgs:           256,
 		MaxUncommittedEntriesSize: 1 << 30,
 	}
+	log.Info("Created Raft")
+	
 
+	
 	if oldwal {
 		rc.node = raft.RestartNode(c)
 	} else {

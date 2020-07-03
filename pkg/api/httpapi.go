@@ -6,7 +6,6 @@ import (
 	"strconv"
 
 	"github.com/TomStuart92/asfalis/pkg/logger"
-	"github.com/TomStuart92/asfalis/pkg/raft/raftpb"
 	"github.com/TomStuart92/asfalis/pkg/store"
 )
 
@@ -14,7 +13,6 @@ var log *logger.Logger = logger.NewStdoutLogger("HTTP-API: ")
 
 type httpAPI struct {
 	store       *store.DistributedStore
-	confChangeC chan<- raftpb.ConfChange
 }
 
 func (h *httpAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -51,12 +49,11 @@ func (h *httpAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 // ServeHTTP starts HTTP server
-func ServeHTTP(kv *store.DistributedStore, port int, confChangeC chan<- raftpb.ConfChange, errorC <-chan error) {
+func ServeHTTP(kv *store.DistributedStore, port int, errorC <-chan error) {
 	srv := http.Server{
 		Addr: ":" + strconv.Itoa(port),
 		Handler: &httpAPI{
 			store:       kv,
-			confChangeC: confChangeC,
 		},
 	}
 	go func() {
@@ -66,7 +63,7 @@ func ServeHTTP(kv *store.DistributedStore, port int, confChangeC chan<- raftpb.C
 	}()
 
 	// exit when raft goes down
-	if err, ok := <-errorC; ok {
-		log.Fatal(err)
+	if _, ok := <-errorC; ok {
+		srv.Close()
 	}
 }
