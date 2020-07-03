@@ -9,7 +9,6 @@ import (
 
 	"github.com/TomStuart92/asfalis/pkg/raft"
 	"github.com/TomStuart92/asfalis/pkg/raft/raftpb"
-	"github.com/TomStuart92/asfalis/pkg/utils"
 	"go.etcd.io/etcd/pkg/types"
 )
 
@@ -58,7 +57,7 @@ func (p *pipeline) handle() {
 	for {
 		select {
 		case m := <-p.msgc:
-			err := p.post(utils.MustMarshal(&m))
+			err := p.post(MustMarshal(&m))
 
 			if err != nil {
 				p.status.deactivate(failureType{source: pipelineMsg, action: "write"}, err.Error())

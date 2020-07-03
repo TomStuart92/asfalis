@@ -43,7 +43,7 @@ func (l *Logger) Debug(v ...interface{}) {
 	if !activeLoggers[l.service] {
 		return
 	}
-	l.Print(v)
+	l.Print(v...)
 }
 
 func (l *Logger) Debugf(format string, v ...interface{}) {
@@ -57,7 +57,7 @@ func (l *Logger) Info(v ...interface{}) {
 	if !activeLoggers[l.service] {
 		return
 	}
-	l.Print(v)
+	l.Print(v...)
 }
 
 func (l *Logger) Infof(format string, v ...interface{}) {
@@ -71,7 +71,7 @@ func (l *Logger) Warning(v ...interface{}) {
 	if !activeLoggers[l.service] {
 		return
 	}
-	l.Print(v)
+	l.Print(v...)
 }
 
 func (l *Logger) Warningf(format string, v ...interface{}) {
@@ -85,7 +85,7 @@ func (l *Logger) Error(v ...interface{}) {
 	if !activeLoggers[l.service] {
 		return
 	}
-	l.Print(v)
+	l.Print(v...)
 }
 
 func (l *Logger) Errorf(format string, v ...interface{}) {
